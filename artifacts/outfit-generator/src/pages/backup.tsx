@@ -194,7 +194,7 @@ export default function AccountPage() {
             {/* Upgrade button (hidden if already premium) */}
             {tier !== 'premium' && (
               <RoseButton onClick={() => setShowUpgrade(true)}>
-                UPGRADE
+                💄 Lifetime Unlock – $9.99
               </RoseButton>
             )}
 
