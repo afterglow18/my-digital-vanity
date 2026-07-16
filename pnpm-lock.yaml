@@ -350,6 +350,12 @@ importers:
 
   artifacts/outfit-generator:
     dependencies:
+      '@aparajita/capacitor-biometric-auth':
+        specifier: ^10.0.0
+        version: 10.0.0
+      '@capacitor/app':
+        specifier: ^8.1.0
+        version: 8.1.0(@capacitor/core@8.4.1)
       '@capacitor/cli':
         specifier: ^8.4.1
         version: 8.4.1
@@ -750,6 +756,10 @@ importers:
 
 packages:
 
+  '@aparajita/capacitor-biometric-auth@10.0.0':
+    resolution: {integrity: sha512-azjWaRucB8x1/gSzSTp/NxelaOZyg+m765gSzjwUkSQgg30RrZPmPq6pyLeeXVSZNDY3Rxf5Hj8obgZaXirCFQ==}
+    engines: {node: '>=20.0.0'}
+
   '@babel/code-frame@7.29.7':
     resolution: {integrity: sha512-Aup7aUOfpbAUg2ROOJN6Iw5f9DMBlzu0mIkm/malLQFN/YQgO48wCj0Kxa3sEHJvPVFg7siR+qRInwXd2qhQKw==}
     engines: {node: '>=6.9.0'}
@@ -836,6 +846,16 @@ packages:
   '@babel/types@7.29.7':
     resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
+
+  '@capacitor/android@8.4.2':
+    resolution: {integrity: sha512-bzf8XZ9C+ePgOQ+e+T0fnhHGH4aCNY494vvSQIF5w4AY07RwEmkFqZs1678DDSMH0hLSQpxEwXGFNUVcXO6bBA==}
+    peerDependencies:
+      '@capacitor/core': ^8.4.0
+
+  '@capacitor/app@8.1.0':
+    resolution: {integrity: sha512-MlmttTOWHDedr/G4SrhNRxsXMqY+R75S4MM4eIgzsgCzOYhb/MpCkA5Q3nuOCfL1oHm26xjUzqZ5aupbOwdfYg==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capacitor/cli@8.4.1':
     resolution: {integrity: sha512-t7F2s7fFHCq113xgrggrmK6ctV0/8E5YfLNVLfPHp4GCTDO+tly9fZvWPf2/sOI8lMm18dLT43qbXLRTz/OZgw==}
@@ -5304,6 +5324,13 @@ packages:
 
 snapshots:
 
+  '@aparajita/capacitor-biometric-auth@10.0.0':
+    dependencies:
+      '@capacitor/android': 8.4.2(@capacitor/core@8.4.1)
+      '@capacitor/app': 8.1.0(@capacitor/core@8.4.1)
+      '@capacitor/core': 8.4.1
+      '@capacitor/ios': 8.4.1(@capacitor/core@8.4.1)
+
   '@babel/code-frame@7.29.7':
     dependencies:
       '@babel/helper-validator-identifier': 7.29.7
@@ -5417,6 +5444,14 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@capacitor/android@8.4.2(@capacitor/core@8.4.1)':
+    dependencies:
+      '@capacitor/core': 8.4.1
+
+  '@capacitor/app@8.1.0(@capacitor/core@8.4.1)':
+    dependencies:
+      '@capacitor/core': 8.4.1
 
   '@capacitor/cli@8.4.1':
     dependencies:

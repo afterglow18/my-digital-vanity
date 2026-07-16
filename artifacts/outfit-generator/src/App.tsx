@@ -10,6 +10,9 @@ import WelcomePage from './pages/welcome';
 import { queryClient } from '@/lib/queryClient';
 import { useState } from 'react';
 import { initRevenueCat } from '@/lib/revenuecat';
+import { BiometricLockProvider, useBiometricLock } from '@/lib/biometricLock';
+import { BiometricLockScreen } from '@/components/BiometricLockScreen';
+import { AnimatePresence } from 'framer-motion';
 
 // Initialise RevenueCat as early as possible
 try {
@@ -42,16 +45,27 @@ function Router() {
   );
 }
 
-function AppShell() {
+function AppContent() {
   const isPreview = new URLSearchParams(window.location.search).get('preview') === '1';
-
   const [entered, setEntered] = useState<boolean>(() => isPreview);
+  const { isLocked } = useBiometricLock();
 
   return (
     <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Router />
       {!entered && <WelcomePage onEnter={() => setEntered(true)} />}
+      <AnimatePresence>
+        {isLocked && <BiometricLockScreen />}
+      </AnimatePresence>
     </WouterRouter>
+  );
+}
+
+function AppShell() {
+  return (
+    <BiometricLockProvider>
+      <AppContent />
+    </BiometricLockProvider>
   );
 }
 
