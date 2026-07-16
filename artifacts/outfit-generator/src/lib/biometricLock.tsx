@@ -59,16 +59,15 @@ export function BiometricLockProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [isLockEnabled, setIsLockEnabled] = useState<boolean>(
-    () => localStorage.getItem(STORAGE_KEY) === "true"
-  );
-  // Start locked if the setting is on (cold launch)
-  const [isLocked, setIsLocked] = useState<boolean>(
-    () => localStorage.getItem(STORAGE_KEY) === "true"
-  );
+  // Read persisted setting once on mount.
+  // For a brand-new install localStorage returns null → enabled = false → locked = false.
+  // Biometric prompts will NEVER appear until the user explicitly enables the toggle.
+  const storedEnabled = localStorage.getItem(STORAGE_KEY) === "true";
+  const [isLockEnabled, setIsLockEnabled] = useState<boolean>(storedEnabled);
+  const [isLocked,      setIsLocked]      = useState<boolean>(storedEnabled);
   const wasActive = useRef(true);
 
-  // Re-lock on foreground return
+  // Re-lock on foreground return — only when the setting is actually on
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
 
@@ -80,6 +79,7 @@ export function BiometricLockProvider({
           wasActive.current = false;
         } else if (!wasActive.current) {
           wasActive.current = true;
+          // Guard against stale closure: re-read localStorage as source of truth
           if (localStorage.getItem(STORAGE_KEY) === "true") {
             setIsLocked(true);
           }

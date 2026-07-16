@@ -3,7 +3,7 @@
  * Matches the app's blush/rose brand palette.
  */
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Lock } from "lucide-react";
 import { useBiometricLock } from "@/lib/biometricLock";
@@ -13,14 +13,20 @@ export function BiometricLockScreen() {
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const handleTryAgain = async () => {
+  const handleTryAgain = useCallback(async () => {
     if (busy) return;
     setBusy(true);
     setFailed(false);
     const ok = await tryUnlock();
     if (!ok) setFailed(true);
     setBusy(false);
-  };
+  }, [busy, tryUnlock]);
+
+  // Auto-prompt as soon as the lock screen appears (normal iOS behaviour)
+  useEffect(() => {
+    handleTryAgain();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally only on mount
 
   return (
     <motion.div
