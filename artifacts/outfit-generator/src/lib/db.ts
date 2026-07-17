@@ -75,10 +75,10 @@ export async function dbListClothing(category?: string): Promise<ClothingItem[]>
   const db = await getDB();
   if (category) {
     const items = await db.getAllFromIndex('clothing', 'by-category', category);
-    return items.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   const items = await db.getAll('clothing');
-  return items.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function dbCreateClothing(data: CreateClothingData): Promise<ClothingItem> {
