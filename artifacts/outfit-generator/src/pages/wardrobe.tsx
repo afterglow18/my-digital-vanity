@@ -283,6 +283,7 @@ export default function WardrobePage() {
                     style={{
                       position: "absolute", top: secTop, left: carLeft,
                       width: carW, height: secH, zIndex: 10, overflow: "hidden",
+                      transform: "translateZ(0)", // iOS WebKit: force GPU layer so overflow:hidden is honoured
                     }}
                   >
                     <ClosetRow
