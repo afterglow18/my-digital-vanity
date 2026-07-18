@@ -293,7 +293,7 @@ export default function GeneratePage() {
                   {items.length > 0 ? (
                     <div style={{
                       position: "absolute", top: secTop, left: carLeft, width: carW, height: secH,
-                      zIndex: 10, overflow: "visible",
+                      zIndex: 10, overflow: "hidden",
                     }}>
                       <ClosetRow
                         ref={rowRefs[key]}
