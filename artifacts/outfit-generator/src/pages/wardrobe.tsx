@@ -283,7 +283,10 @@ export default function WardrobePage() {
                     style={{
                       position: "absolute", top: secTop, left: carLeft,
                       width: carW, height: secH, zIndex: 10, overflow: "hidden",
-                      clipPath: "inset(0)", // iOS WebKit: clip-path is honoured even on transformed children
+                      // iOS WebKit won't clip transformed children via overflow or clipPath alone;
+                      // -webkit-mask-image forces a new compositing layer that actually clips.
+                      WebkitMaskImage: "linear-gradient(#fff 0 0)",
+                      maskImage: "linear-gradient(#fff 0 0)",
                     }}
                   >
                     <ClosetRow

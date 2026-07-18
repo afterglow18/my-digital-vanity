@@ -294,7 +294,8 @@ export default function GeneratePage() {
                     <div style={{
                       position: "absolute", top: secTop, left: carLeft, width: carW, height: secH,
                       zIndex: 10, overflow: "hidden",
-                      clipPath: "inset(0)", // iOS WebKit: clip-path is honoured even on transformed children
+                      WebkitMaskImage: "linear-gradient(#fff 0 0)",
+                      maskImage: "linear-gradient(#fff 0 0)",
                     }}>
                       <ClosetRow
                         ref={rowRefs[key]}
