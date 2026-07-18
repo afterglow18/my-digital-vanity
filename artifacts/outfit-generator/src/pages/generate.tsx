@@ -263,8 +263,11 @@ export default function GeneratePage() {
       )}
 
       {ready && (() => {
-        const carLeft = pX(ir, LM.doorL);
-        const carW    = pW(ir, LM.doorR - LM.doorL);
+        const carLeft  = pX(ir, LM.doorL);
+        const carW     = pW(ir, LM.doorR - LM.doorL);
+        const carInset = pW(ir, 0.055);
+        const carLeft2 = carLeft + carInset;
+        const carW2    = carW - carInset * 2;
 
         return (
           <>
@@ -292,10 +295,8 @@ export default function GeneratePage() {
 
                   {items.length > 0 ? (
                     <div style={{
-                      position: "absolute", top: secTop, left: carLeft, width: carW, height: secH,
+                      position: "absolute", top: secTop, left: carLeft2, width: carW2, height: secH,
                       zIndex: 10, overflow: "hidden",
-                      WebkitMaskImage: "linear-gradient(#fff 0 0)",
-                      maskImage: "linear-gradient(#fff 0 0)",
                     }}>
                       <ClosetRow
                         ref={rowRefs[key]}

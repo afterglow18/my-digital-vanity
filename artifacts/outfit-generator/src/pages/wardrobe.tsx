@@ -249,8 +249,13 @@ export default function WardrobePage() {
             const items   = rowData[key];
             const secTop  = pY(ir, lm.sectionTop);
             const secH    = pH(ir, lm.shelfY - lm.sectionTop);
-            const carLeft = pX(ir, LM.doorL);
-            const carW    = pW(ir, LM.doorR - LM.doorL);
+            const carLeft  = pX(ir, LM.doorL);
+            const carW     = pW(ir, LM.doorR - LM.doorL);
+            // Inset the carousel horizontally so side cards stay inside the mirror glass
+            // even when iOS WebKit ignores overflow/clip on transformed children.
+            const carInset = pW(ir, 0.055);
+            const carLeft2 = carLeft + carInset;
+            const carW2    = carW - carInset * 2;
             const btnCY   = pY(ir, lm.btnCY);
             const btnH    = Math.max(32, pH(ir, 0.045));
             const labelY  = pY(ir, lm.btnCY + (lm.sectionTop - lm.btnCY) * 0.08);
@@ -281,12 +286,8 @@ export default function WardrobePage() {
                   <div
                     data-testid={`row-${key}`}
                     style={{
-                      position: "absolute", top: secTop, left: carLeft,
-                      width: carW, height: secH, zIndex: 10, overflow: "hidden",
-                      // iOS WebKit won't clip transformed children via overflow or clipPath alone;
-                      // -webkit-mask-image forces a new compositing layer that actually clips.
-                      WebkitMaskImage: "linear-gradient(#fff 0 0)",
-                      maskImage: "linear-gradient(#fff 0 0)",
+                      position: "absolute", top: secTop, left: carLeft2,
+                      width: carW2, height: secH, zIndex: 10, overflow: "hidden",
                     }}
                   >
                     <ClosetRow
