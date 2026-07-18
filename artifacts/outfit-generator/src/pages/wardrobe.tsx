@@ -282,7 +282,7 @@ export default function WardrobePage() {
                     data-testid={`row-${key}`}
                     style={{
                       position: "absolute", top: secTop, left: carLeft,
-                      width: carW, height: secH, zIndex: 10, overflow: "visible",
+                      width: carW, height: secH, zIndex: 10, overflow: "hidden",
                     }}
                   >
                     <ClosetRow
