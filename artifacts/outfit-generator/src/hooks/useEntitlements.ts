@@ -1,11 +1,12 @@
 /**
  * useEntitlements — entitlement hook backed by RevenueCat.
  *
- * Tier is persisted in localStorage as a fast-read cache and kept in sync
- * after every purchase / restore.  The authoritative source is RevenueCat.
+ * localStorage is a fast-read CACHE for instant UI. RevenueCat is always the
+ * authority. syncTierFromRevenueCat() is called on launch, foreground return,
+ * after purchase, and after restore — so refunds / expiry auto-downgrade.
  */
 
-import { useCallback, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { Purchases } from '@revenuecat/purchases-capacitor';
 import type { Tier, TierCapabilities, PurchaseProduct } from '@/types/local';
 import { TIER_CAPS, PRODUCT_TIER } from '@/types/local';
@@ -51,14 +52,38 @@ function getTierSnapshot(): Tier {
   return _currentTier;
 }
 
-/** Promote the tier globally and persist. Called after a successful purchase. */
+/** Promote (or demote) the tier globally and persist. */
 export function setGlobalTier(t: Tier, product?: PurchaseProduct): void {
   try {
     localStorage.setItem(STORAGE_KEY, t);
     if (product) localStorage.setItem(STORAGE_PRODUCT_KEY, product);
+    else if (t === 'free') localStorage.removeItem(STORAGE_PRODUCT_KEY);
   } catch {}
   _currentTier = t;
   _subscribers.forEach((fn) => fn());
+}
+
+/**
+ * Ask RevenueCat for the current CustomerInfo and sync the in-app tier.
+ * Called on launch, foreground return, after purchase, and after restore.
+ * On network/SDK error the cached value is kept — never punish users for
+ * a bad connection.  On confirmed no-entitlement, downgrades to free so
+ * refunds and expiries take effect automatically.
+ */
+export async function syncTierFromRevenueCat(): Promise<void> {
+  try {
+    const { customerInfo } = await Purchases.getCustomerInfo();
+    const active = ENTITLEMENT_ID in (customerInfo.entitlements?.active ?? {});
+    if (active) {
+      // Only upgrade, never silently downgrade premium → unlock from sync
+      if (_currentTier === 'free') setGlobalTier('unlock');
+    } else {
+      // Confirmed no active entitlement — downgrade (handles refunds & expiry)
+      setGlobalTier('free');
+    }
+  } catch {
+    // SDK not configured on web, or network failure — keep cached value
+  }
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -120,6 +145,8 @@ export function useEntitlements() {
         setGlobalTier('unlock');
         return 'success';
       }
+      // Restore confirmed no entitlement — downgrade if currently elevated
+      setGlobalTier('free');
       return 'cancelled';
     } catch (err) {
       console.error('[RevenueCat] Restore error:', err);

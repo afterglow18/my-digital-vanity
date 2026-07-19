@@ -8,15 +8,18 @@ import FavoritesPage from './pages/favorites';
 import BackupPage from './pages/backup';
 import WelcomePage from './pages/welcome';
 import { queryClient } from '@/lib/queryClient';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { initRevenueCat } from '@/lib/revenuecat';
+import { syncTierFromRevenueCat } from '@/hooks/useEntitlements';
 import { BiometricLockProvider, useBiometricLock } from '@/lib/biometricLock';
 import { BiometricLockScreen } from '@/components/BiometricLockScreen';
 import { AnimatePresence } from 'framer-motion';
+import { App as CapApp } from '@capacitor/app';
 
-// Initialise RevenueCat as early as possible
+// Initialise RevenueCat then immediately sync entitlements from the server
 try {
   initRevenueCat();
+  syncTierFromRevenueCat().catch(() => {}); // launch check
 } catch (e) {
   console.error('[RevenueCat] Init failed:', e);
 }
@@ -62,6 +65,15 @@ function AppContent() {
 }
 
 function AppShell() {
+  // Re-check entitlements every time the app returns to the foreground so
+  // refunds and subscription expiries take effect without a full restart.
+  useEffect(() => {
+    const listenerPromise = CapApp.addListener('appStateChange', ({ isActive }) => {
+      if (isActive) syncTierFromRevenueCat().catch(() => {});
+    });
+    return () => { listenerPromise.then(h => h.remove()); };
+  }, []);
+
   return (
     <BiometricLockProvider>
       <AppContent />
