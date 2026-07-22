@@ -70,29 +70,40 @@ const PLANS: Plan[] = [
 export function UpgradeSheet({ onClose }: Props) {
   const { purchase, restore } = useEntitlements();
   const [selected, setSelected] = useState<PurchaseProduct>("lifetime");
-  const [status, setStatus]     = useState<"idle" | "pending" | "restoring">("idle");
+  const [status, setStatus]     = useState<"idle" | "pending" | "restoring" | "error">("idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const selectedPlan = PLANS.find(p => p.id === selected)!;
 
   const handlePurchase = useCallback(async () => {
-    if (status !== "idle") return;
+    if (status === "pending" || status === "restoring") return;
+    setErrorMsg(null);
     setStatus("pending");
     const result: PurchaseResult = await purchase(selected);
     if (result === "success") {
       onClose();
+    } else if (result === "unavailable") {
+      setErrorMsg("Purchase unavailable right now. Please try again.");
+      setStatus("error");
     } else {
+      // cancelled — user dismissed the native sheet
       setStatus("idle");
     }
   }, [status, purchase, selected, onClose]);
 
   const handleRestore = useCallback(async () => {
     if (status !== "idle") return;
+    setErrorMsg(null);
     setStatus("restoring");
     const result: PurchaseResult = await restore();
     if (result === "success") {
       onClose();
+    } else if (result === "unavailable") {
+      setErrorMsg("Restore failed. Check your connection and try again.");
+      setStatus("error");
     } else {
-      setStatus("idle");
+      setErrorMsg("No previous purchase found for this Apple ID.");
+      setStatus("error");
     }
   }, [status, restore, onClose]);
 
@@ -238,16 +249,23 @@ export function UpgradeSheet({ onClose }: Props) {
         className="px-5 flex flex-col gap-2.5 flex-shrink-0 mt-auto"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
+        {/* Error message */}
+        {errorMsg && (
+          <p className="text-center text-xs font-semibold text-red-500 -mb-1">
+            {errorMsg}
+          </p>
+        )}
+
         <button
           onClick={handlePurchase}
-          disabled={status !== "idle"}
+          disabled={status === "pending" || status === "restoring"}
           className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
                      text-black transition-all active:translate-y-0.5 active:shadow-none
                      disabled:opacity-60 disabled:cursor-not-allowed"
           style={{
-            background: status !== "idle" ? "#D0909A" : "linear-gradient(to bottom, #E8B0B8, #D0909A)",
+            background: (status === "pending" || status === "restoring") ? "#D0909A" : "linear-gradient(to bottom, #E8B0B8, #D0909A)",
             border:     "2.5px solid #D0909A",
-            boxShadow:  status !== "idle" ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
+            boxShadow:  (status === "pending" || status === "restoring") ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
             letterSpacing: "0.04em",
           }}
         >
@@ -266,7 +284,7 @@ export function UpgradeSheet({ onClose }: Props) {
         <div className="flex items-center justify-center gap-4">
           <button
             onClick={handleRestore}
-            disabled={status !== "idle"}
+            disabled={status === "pending" || status === "restoring"}
             className="text-xs font-bold text-black/40 underline underline-offset-2
                        hover:text-black/60 transition-colors disabled:opacity-40"
           >
