@@ -15,6 +15,17 @@ const config: CapacitorConfig = {
     backgroundColor: '#F4D6DD',
     // Allow inline media playback (used for wardrobe image previews)
     allowsInlineMediaPlayback: true,
+
+    // Privacy usage descriptions — all three are required for the camera/photo
+    // picker flow.  Missing any one causes a TCC SIGABRT or silent refusal.
+    infoPlist: {
+      NSCameraUsageDescription:
+        'My Digital Vanity needs camera access so you can photograph clothing and accessories to add to your wardrobe.',
+      NSPhotoLibraryUsageDescription:
+        'My Digital Vanity needs access to your photo library so you can choose existing photos of your clothing and accessories.',
+      NSPhotoLibraryAddUsageDescription:
+        'My Digital Vanity saves photos you take with the camera to your library so you can access them later.',
+    },
   },
 
   plugins: {
