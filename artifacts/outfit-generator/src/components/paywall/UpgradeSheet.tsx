@@ -8,6 +8,9 @@ import { X, Check } from "lucide-react";
 import { useEntitlements, type PurchaseResult } from "@/hooks/useEntitlements";
 import type { PurchaseProduct } from "@/types/local";
 
+const PRIVACY_POLICY_URL = "https://app.notion.com/p/My-Digital-Collection-Privacy-Policy-39682db6065380b19dedcb108d4a0ef4?source=copy_link";
+const TERMS_URL          = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+
 export type UpgradeReason = "items" | "outfits" | "mannequin";
 
 interface Props {
@@ -65,14 +68,14 @@ const PLANS: Plan[] = [
 
 // ── Component ─────────────────────────────────────────────────────────────────
 export function UpgradeSheet({ onClose }: Props) {
-  const { purchase } = useEntitlements();
+  const { purchase, restore } = useEntitlements();
   const [selected, setSelected] = useState<PurchaseProduct>("lifetime");
-  const [status, setStatus]     = useState<"idle" | "pending">("idle");
+  const [status, setStatus]     = useState<"idle" | "pending" | "restoring">("idle");
 
   const selectedPlan = PLANS.find(p => p.id === selected)!;
 
   const handlePurchase = useCallback(async () => {
-    if (status === "pending") return;
+    if (status !== "idle") return;
     setStatus("pending");
     const result: PurchaseResult = await purchase(selected);
     if (result === "success") {
@@ -81,6 +84,17 @@ export function UpgradeSheet({ onClose }: Props) {
       setStatus("idle");
     }
   }, [status, purchase, selected, onClose]);
+
+  const handleRestore = useCallback(async () => {
+    if (status !== "idle") return;
+    setStatus("restoring");
+    const result: PurchaseResult = await restore();
+    if (result === "success") {
+      onClose();
+    } else {
+      setStatus("idle");
+    }
+  }, [status, restore, onClose]);
 
   return (
     <motion.div
@@ -222,37 +236,73 @@ export function UpgradeSheet({ onClose }: Props) {
       {/* ── CTA ────────────────────────────────────────────────────────── */}
       <div
         className="px-5 flex flex-col gap-2.5 flex-shrink-0 mt-auto"
-        style={{ paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))" }}
+        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
         <button
           onClick={handlePurchase}
-          disabled={status === "pending"}
+          disabled={status !== "idle"}
           className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
                      text-black transition-all active:translate-y-0.5 active:shadow-none
                      disabled:opacity-60 disabled:cursor-not-allowed"
           style={{
-            background: status === "pending" ? "#D0909A" : "linear-gradient(to bottom, #E8B0B8, #D0909A)",
+            background: status !== "idle" ? "#D0909A" : "linear-gradient(to bottom, #E8B0B8, #D0909A)",
             border:     "2.5px solid #D0909A",
-            boxShadow:  status === "pending" ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
+            boxShadow:  status !== "idle" ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
             letterSpacing: "0.04em",
           }}
         >
           {status === "pending"
             ? "Opening checkout…"
-            : selected === "monthly"
-              ? `UNLOCK MONTHLY – ${selectedPlan.price} ›`
-              : selected === "yearly"
-                ? `UNLOCK YEARLY – ${selectedPlan.price} ›`
-                : `UNLOCK FOREVER – ${selectedPlan.price} ›`}
+            : status === "restoring"
+              ? "Restoring…"
+              : selected === "monthly"
+                ? `UNLOCK MONTHLY – ${selectedPlan.price} ›`
+                : selected === "yearly"
+                  ? `UNLOCK YEARLY – ${selectedPlan.price} ›`
+                  : `UNLOCK FOREVER – ${selectedPlan.price} ›`}
         </button>
 
-        <button
-          onClick={onClose}
-          className="text-sm font-bold text-black/35 text-center
-                     underline underline-offset-2 hover:text-black/55 transition-colors"
-        >
-          Maybe Later
-        </button>
+        {/* Restore + Maybe Later */}
+        <div className="flex items-center justify-center gap-4">
+          <button
+            onClick={handleRestore}
+            disabled={status !== "idle"}
+            className="text-xs font-bold text-black/40 underline underline-offset-2
+                       hover:text-black/60 transition-colors disabled:opacity-40"
+          >
+            Restore Purchases
+          </button>
+          <span className="text-black/20 text-xs">·</span>
+          <button
+            onClick={onClose}
+            className="text-xs font-bold text-black/40 hover:text-black/60 transition-colors"
+          >
+            Maybe Later
+          </button>
+        </div>
+
+        {/* Legal links — required by Apple */}
+        <div className="flex items-center justify-center gap-3 pb-1">
+          <a
+            href={PRIVACY_POLICY_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-medium text-black/35 underline underline-offset-2
+                       hover:text-black/55 transition-colors"
+          >
+            Privacy Policy
+          </a>
+          <span className="text-black/20 text-[10px]">·</span>
+          <a
+            href={TERMS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[10px] font-medium text-black/35 underline underline-offset-2
+                       hover:text-black/55 transition-colors"
+          >
+            Terms of Use
+          </a>
+        </div>
       </div>
     </motion.div>
   );
