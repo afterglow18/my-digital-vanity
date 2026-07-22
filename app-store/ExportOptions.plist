@@ -14,7 +14,7 @@
   <key>provisioningProfiles</key>
   <dict>
     <key>com.mydigitalvanity.app</key>
-    <string>My Digital Vanity App</string>
+    <string>My Digital Vanity AppStore</string>
   </dict>
   <key>uploadSymbols</key>
   <true/>

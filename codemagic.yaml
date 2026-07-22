@@ -33,7 +33,7 @@ workflows:
         COREPACK_ENABLE_STRICT: "0"
         BUNDLE_ID: com.mydigitalvanity.app
         TEAM_ID: 2A78MFVCJS
-        PROFILE_NAME: My Digital Vanity App
+        PROFILE_NAME: My Digital Vanity AppStore
 
     scripts:
       - name: Install pnpm and dependencies
