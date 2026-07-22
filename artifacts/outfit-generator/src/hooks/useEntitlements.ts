@@ -43,6 +43,11 @@ export function readStoredProduct(): PurchaseProduct | null {
 let _currentTier: Tier = readStoredTier();
 const _subscribers = new Set<() => void>();
 
+// Timestamp of the most recent completed purchase — used to suppress
+// aggressive sync downgrades during RevenueCat propagation delay.
+let _lastPurchaseAt = 0;
+const PURCHASE_GRACE_MS = 120_000; // 2 minutes
+
 function subscribeTier(notify: () => void) {
   _subscribers.add(notify);
   return () => { _subscribers.delete(notify); };
@@ -78,8 +83,13 @@ export async function syncTierFromRevenueCat(): Promise<void> {
       // Only upgrade, never silently downgrade premium → unlock from sync
       if (_currentTier === 'free') setGlobalTier('unlock');
     } else {
-      // Confirmed no active entitlement — downgrade (handles refunds & expiry)
-      setGlobalTier('free');
+      // Confirmed no active entitlement — downgrade (handles refunds & expiry).
+      // BUT: skip the downgrade during the grace window after a purchase so
+      // RevenueCat propagation delay doesn't immediately wipe a real purchase.
+      const withinGrace = Date.now() - _lastPurchaseAt < PURCHASE_GRACE_MS;
+      if (!withinGrace) {
+        setGlobalTier('free');
+      }
     }
   } catch {
     // SDK not configured on web, or network failure — keep cached value
@@ -117,15 +127,17 @@ export function useEntitlements() {
           return 'unavailable';
         }
 
-        const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
+        // If purchasePackage completes without throwing, the purchase succeeded.
+        // The SDK throws for user-cancelled and payment errors — a clean return
+        // means Apple accepted payment regardless of what entitlements.active
+        // contains (which can differ if the entitlement ID in the RC dashboard
+        // doesn't match ENTITLEMENT_ID, or due to propagation delay).
+        await Purchases.purchasePackage({ aPackage: pkg });
 
-        if (ENTITLEMENT_ID in (customerInfo.entitlements?.active ?? {})) {
-          const newTier: Tier = PRODUCT_TIER_MAP[product] ?? PRODUCT_TIER[product] ?? 'unlock';
-          setGlobalTier(newTier, product);
-          return 'success';
-        }
-
-        return 'cancelled';
+        _lastPurchaseAt = Date.now();
+        const newTier: Tier = PRODUCT_TIER_MAP[product] ?? PRODUCT_TIER[product] ?? 'unlock';
+        setGlobalTier(newTier, product);
+        return 'success';
       } catch (err: any) {
         // userCancelled is thrown as an error by the SDK
         if (err?.code === 'PURCHASE_CANCELLED' || err?.userCancelled === true) {
@@ -142,6 +154,7 @@ export function useEntitlements() {
     try {
       const active = await restoreAndCheck();
       if (active) {
+        _lastPurchaseAt = Date.now();
         setGlobalTier('unlock');
         return 'success';
       }
