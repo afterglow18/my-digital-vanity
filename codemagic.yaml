@@ -58,27 +58,24 @@ workflows:
         script: |
           PLIST="artifacts/outfit-generator/ios/App/App/Info.plist"
 
-          # Export compliance (required to avoid App Store encryption questionnaire)
-          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || \
-          /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
+          # Export compliance
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
 
-          # Camera — required or app crashes with TCC SIGABRT when camera is accessed
-          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'My Digital Vanity needs camera access so you can photograph beauty products to add to your vanity.'" "$PLIST" || \
-          /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'My Digital Vanity needs camera access so you can photograph beauty products to add to your vanity.'" "$PLIST"
+          # Camera usage — absence causes TCC SIGABRT crash on first camera access
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription Camera is used to photograph your beauty products." "$PLIST"
 
-          # Photo library read — required for picking existing photos
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'My Digital Vanity needs access to your photo library so you can choose photos of your beauty products.'" "$PLIST" || \
-          /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'My Digital Vanity needs access to your photo library so you can choose photos of your beauty products.'" "$PLIST"
+          # Photo library read
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription Photo library is used to choose photos of your beauty products." "$PLIST"
 
-          # Photo library write — required when saving camera photos to the library
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'My Digital Vanity saves photos you take to your library so you can access them later.'" "$PLIST" || \
-          /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'My Digital Vanity saves photos you take to your library so you can access them later.'" "$PLIST"
+          # Photo library write
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription Photos you take are saved to your library." "$PLIST"
 
-          echo "Info.plist privacy keys:"
+          echo "=== Verifying Info.plist privacy keys ==="
           /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryUsageDescription" "$PLIST"
           /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" "$PLIST"
+          echo "=== Done ==="
 
       - name: Inject app icon
         script: |
