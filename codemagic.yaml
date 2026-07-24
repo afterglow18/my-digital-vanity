@@ -54,13 +54,31 @@ workflows:
           npx cap add ios
           npx cap sync ios
 
-      - name: Add export compliance to Info.plist
+      - name: Add export compliance and privacy keys to Info.plist
         script: |
           PLIST="artifacts/outfit-generator/ios/App/App/Info.plist"
+
+          # Export compliance (required to avoid App Store encryption questionnaire)
           /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || \
           /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
-          echo "Export compliance set:"
+
+          # Camera — required or app crashes with TCC SIGABRT when camera is accessed
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'My Digital Vanity needs camera access so you can photograph beauty products to add to your vanity.'" "$PLIST" || \
+          /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription 'My Digital Vanity needs camera access so you can photograph beauty products to add to your vanity.'" "$PLIST"
+
+          # Photo library read — required for picking existing photos
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 'My Digital Vanity needs access to your photo library so you can choose photos of your beauty products.'" "$PLIST" || \
+          /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription 'My Digital Vanity needs access to your photo library so you can choose photos of your beauty products.'" "$PLIST"
+
+          # Photo library write — required when saving camera photos to the library
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string 'My Digital Vanity saves photos you take to your library so you can access them later.'" "$PLIST" || \
+          /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription 'My Digital Vanity saves photos you take to your library so you can access them later.'" "$PLIST"
+
+          echo "Info.plist privacy keys:"
           /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryUsageDescription" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" "$PLIST"
 
       - name: Inject app icon
         script: |
