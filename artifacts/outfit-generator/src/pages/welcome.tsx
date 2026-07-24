@@ -164,7 +164,7 @@ export default function WelcomePage({ onEnter }: Props) {
         style={{
           width: "100%",
           maxWidth: 448,
-          height: "calc(100dvh - 90px)",
+          height: "100dvh",
           position: "relative",
           overflow: "hidden",
         }}

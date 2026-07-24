@@ -22,9 +22,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   ];
 
   return (
-    <div className="min-h-[100dvh] w-full bg-[#f8f9fa] flex justify-center lg:py-8 lg:px-4">
-      {/* Phone Frame Constraint for Desktop */}
-      <div className="w-full max-w-md bg-background h-[100dvh] lg:min-h-[850px] lg:h-[850px] lg:border-[6px] lg:border-black lg:rounded-[3rem] lg:shadow-2xl relative overflow-hidden flex flex-col lg:overflow-y-auto">
+    <div className="min-h-[100dvh] w-full bg-[#f8f9fa] md:bg-[#F4D6DD] flex justify-center lg:py-8 lg:px-4">
+      {/* Phone Frame Constraint for Desktop / Tablet */}
+      <div className="w-full max-w-md bg-background h-[100dvh] md:shadow-2xl md:border-x md:border-black/[0.07] lg:min-h-[850px] lg:h-[850px] lg:border-[6px] lg:border-black lg:rounded-[3rem] lg:shadow-2xl relative overflow-hidden flex flex-col lg:overflow-y-auto">
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto pb-[90px] relative">
