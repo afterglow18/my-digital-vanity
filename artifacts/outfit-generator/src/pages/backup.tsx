@@ -159,6 +159,7 @@ export default function AccountPage() {
       className="min-h-full pb-10"
       style={{ background: '#F5F0E8' }}
     >
+      <div className="sm:max-w-xl sm:mx-auto">
       {/* Page title */}
       <div className="px-5 pt-8 pb-5">
         <h1
@@ -350,6 +351,7 @@ export default function AccountPage() {
         </Card>
 
       </div>
+      </div>{/* end sm:max-w-xl wrapper */}
 
       {/* Import confirm dialog */}
       <AnimatePresence>

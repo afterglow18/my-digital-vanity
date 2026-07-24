@@ -163,7 +163,6 @@ export default function WelcomePage({ onEnter }: Props) {
         ref={containerRef}
         style={{
           width: "100%",
-          maxWidth: 448,
           height: "100dvh",
           position: "relative",
           overflow: "hidden",
