@@ -164,44 +164,8 @@ export function UpgradeSheet({ onClose }: Props) {
   const selectedPrice = priceFor(selected);
   const ctaBusy = status === "pending" || status === "restoring";
 
-  // ── Package error state ───────────────────────────────────────────────────
-  if (!loadingPkgs && pkgError) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: "100%" }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: "100%" }}
-        transition={{ type: "spring", damping: 28, stiffness: 240 }}
-        className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-5 max-w-md mx-auto overflow-hidden"
-        style={{ background: "#FDF5F9" }}
-      >
-        <button
-          onClick={onClose}
-          style={{ top: "calc(env(safe-area-inset-top) + 10px)" }}
-          className="absolute right-3 top-3 w-8 h-8 rounded-full bg-white/90
-                     flex items-center justify-center border border-black/10"
-        >
-          <X className="w-4 h-4 text-black/60" />
-        </button>
-
-        <span className="text-5xl">💄</span>
-        <div className="text-center px-8">
-          <p className="font-black text-lg uppercase tracking-tight mb-1">Plans unavailable</p>
-          <p className="text-sm text-black/50 font-medium">
-            We couldn't load subscription plans right now. Check your connection and try again.
-          </p>
-        </div>
-        <button
-          onClick={loadPackages}
-          className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide"
-          style={{ background: "linear-gradient(to bottom, #E8B0B8, #D0909A)", border: "2px solid #D0909A" }}
-        >
-          <RefreshCw className="w-4 h-4" />
-          Try Again
-        </button>
-      </motion.div>
-    );
-  }
+  // pkgError → degraded mode: show paywall with fallback prices + retry banner.
+  // Never block with a full error screen — Apple's reviewer must see the plans.
 
   // ── Main paywall UI ────────────────────────────────────────────────────────
   return (
@@ -257,6 +221,27 @@ export function UpgradeSheet({ onClose }: Props) {
           A premium feature — unlock it once.
         </p>
       </div>
+
+      {/* ── Degraded-mode retry banner (shown when package load fails) ──── */}
+      {pkgError && (
+        <div
+          className="mx-5 mb-2 px-3 py-2 rounded-xl flex items-center gap-2 flex-shrink-0"
+          style={{ background: "#FFF0F0", border: "1.5px solid #FFAAAA" }}
+        >
+          <span className="text-xs font-semibold text-red-500 flex-1 leading-tight">
+            Couldn't reach the store. Prices shown are estimates.
+          </span>
+          <button
+            onClick={loadPackages}
+            className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wide text-white
+                       px-2.5 py-1.5 rounded-lg flex-shrink-0"
+            style={{ background: "#D0909A" }}
+          >
+            <RefreshCw className="w-3 h-3" />
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ── Features card ──────────────────────────────────────────────── */}
       <div
