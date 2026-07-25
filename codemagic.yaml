@@ -57,6 +57,33 @@ workflows:
           npx cap add ios
           npx cap sync ios
 
+      - name: Inject PhotoCleanup Vision plugin into Xcode project
+        script: |
+          NATIVE_SRC="artifacts/outfit-generator/native"
+          IOS_APP="artifacts/outfit-generator/ios/App/App"
+          PROJECT="artifacts/outfit-generator/ios/App/App.xcodeproj"
+
+          # Copy Swift plugin source into the iOS app target directory
+          cp "$NATIVE_SRC/PhotoCleanupPlugin.swift" "$IOS_APP/"
+          cp "$NATIVE_SRC/PhotoCleanupPlugin.m"     "$IOS_APP/"
+          echo "Copied PhotoCleanup plugin files"
+
+          # Register both files with the Xcode project so they compile
+          ruby - << 'RUBY'
+          require 'xcodeproj'
+          project = Xcodeproj::Project.open('artifacts/outfit-generator/ios/App/App.xcodeproj')
+          target  = project.targets.find { |t| t.name == 'App' }
+          group   = project.main_group.find_subpath('App', false)
+          ['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m'].each do |fname|
+            next if group.children.any? { |c| c.respond_to?(:path) && c.path == fname }
+            ref = group.new_reference(fname)
+            target.source_build_phase.add_file_reference(ref)
+            puts "  Added #{fname} to Xcode project"
+          end
+          project.save
+          puts 'PhotoCleanup Vision plugin injected ✓'
+          RUBY
+
       - name: Add export compliance and privacy keys to Info.plist
         script: |
           PLIST="artifacts/outfit-generator/ios/App/App/Info.plist"
