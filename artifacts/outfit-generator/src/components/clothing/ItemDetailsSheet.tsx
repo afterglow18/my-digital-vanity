@@ -119,6 +119,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
   // Photo cleanup state
   const [cleanupProcessing, setCleanupProcessing] = useState(false);
+  const [cleanupError, setCleanupError]           = useState<string | null>(null);
   const [compareData, setCompareData] = useState<{
     originalDataUrl: string;
     cleanedDataUrl: string;
@@ -183,6 +184,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const handleCleanUpPhoto = async () => {
     if (!item.imageObjectPath) return;
     setCleanupProcessing(true);
+    setCleanupError(null);
     try {
       const originalDataUrl = item.imageObjectPath;
       // Strip data-URL prefix to get raw base64 for the Vision plugin
@@ -195,6 +197,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
       setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: result.hadSubject });
     } catch (err) {
       console.error("Photo cleanup error:", err);
+      setCleanupError("Couldn't clean up this photo. Please try again.");
     } finally {
       setCleanupProcessing(false);
     }
@@ -278,7 +281,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
           {/* Clean Up Photo button — native iOS only */}
           {isPhotoCleanupAvailable() && (
-            <div className="px-4 py-2 bg-white border-t-2 border-black/10">
+            <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
               <button
                 onClick={handleCleanUpPhoto}
                 disabled={cleanupProcessing}
@@ -300,6 +303,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
                   </>
                 )}
               </button>
+              {cleanupError && (
+                <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
+              )}
             </div>
           )}
         </div>

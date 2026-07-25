@@ -73,10 +73,26 @@ workflows:
           require 'xcodeproj'
           project = Xcodeproj::Project.open('artifacts/outfit-generator/ios/App/App.xcodeproj')
           target  = project.targets.find { |t| t.name == 'App' }
-          group   = project.main_group.find_subpath('App', false)
+          abort "ERROR: Could not find 'App' target" unless target
+
+          # Find the group that already owns AppDelegate.swift — robust regardless
+          # of how Capacitor names or nests the App source group.
+          app_group = nil
+          project.main_group.recursive_children_groups.each do |g|
+            if g.files.any? { |f| f.respond_to?(:path) && f.path == 'AppDelegate.swift' }
+              app_group = g
+              break
+            end
+          end
+          # Fallback: named 'App' directly under main group
+          app_group ||= project.main_group.find_subpath('App', false)
+          abort "ERROR: Could not locate App source group in Xcode project" unless app_group
+
+          puts "Using group: #{app_group.hierarchy_path}"
           ['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m'].each do |fname|
-            next if group.children.any? { |c| c.respond_to?(:path) && c.path == fname }
-            ref = group.new_reference(fname)
+            already = target.source_build_phase.files_references.any? { |r| r.respond_to?(:path) && r.path == fname }
+            next if already
+            ref = app_group.new_reference(fname)
             target.source_build_phase.add_file_reference(ref)
             puts "  Added #{fname} to Xcode project"
           end
