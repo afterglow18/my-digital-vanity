@@ -15,7 +15,12 @@ import { Capacitor } from "@capacitor/core";
 import type { PurchaseProduct, Tier } from "@/types/local";
 
 const TEST_KEY = import.meta.env.VITE_REVENUECAT_TEST_API_KEY as string | undefined;
-const IOS_KEY  = import.meta.env.VITE_REVENUECAT_IOS_API_KEY  as string | undefined;
+// RC iOS public keys are distributed in every app bundle — safe to hardcode.
+// The env var is tried first so the key can still be rotated via Codemagic
+// without a code change; the hardcoded value is the fallback.
+const IOS_KEY  =
+  (import.meta.env.VITE_REVENUECAT_IOS_API_KEY as string | undefined) ||
+  "appl_ZhdCoWtbocoFgCAlmYmHzWmPzWN";
 
 export const ENTITLEMENT_ID = "unlock";
 
