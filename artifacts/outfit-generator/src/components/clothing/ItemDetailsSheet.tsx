@@ -5,12 +5,14 @@
  */
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2 } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
+import { PhotoCleanup, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { PhotoCompareSheet } from "./PhotoCompareSheet";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -115,6 +117,14 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Photo cleanup state
+  const [cleanupProcessing, setCleanupProcessing] = useState(false);
+  const [compareData, setCompareData] = useState<{
+    originalDataUrl: string;
+    cleanedDataUrl: string;
+    hadSubject: boolean;
+  } | null>(null);
+
   const updateItem  = useUpdateClothingItem();
   const deleteItem  = useDeleteClothingItem();
   const queryClient = useQueryClient();
@@ -170,6 +180,38 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     );
   };
 
+  const handleCleanUpPhoto = async () => {
+    if (!item.imageObjectPath) return;
+    setCleanupProcessing(true);
+    try {
+      const originalDataUrl = item.imageObjectPath;
+      // Strip data-URL prefix to get raw base64 for the Vision plugin
+      const commaIdx = originalDataUrl.indexOf(",");
+      const imageData = commaIdx >= 0 ? originalDataUrl.slice(commaIdx + 1) : originalDataUrl;
+
+      const result = await PhotoCleanup.processPhoto({ imageData });
+      const cleanedDataUrl = `data:image/jpeg;base64,${result.cleanedImageData}`;
+
+      setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: result.hadSubject });
+    } catch (err) {
+      console.error("Photo cleanup error:", err);
+    } finally {
+      setCleanupProcessing(false);
+    }
+  };
+
+  const handleCompareSelect = (dataUrl: string) => {
+    updateItem.mutate(
+      { id: item.id, data: { imageObjectPath: dataUrl } },
+      {
+        onSuccess: () => {
+          invalidate();
+          setCompareData(null);
+        },
+      },
+    );
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: "100%" }}
@@ -219,20 +261,69 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
       {/* Photo */}
       {item.imageObjectPath && (
-        <div
-          className="w-full h-52 flex-shrink-0 border-b-2 border-black"
-          style={{
-            backgroundImage: "repeating-conic-gradient(#e5e7eb 0% 25%, white 0% 50%)",
-            backgroundSize: "16px 16px",
-          }}
-        >
-          <img
-            src={getImageUrl(item.imageObjectPath)!}
-            alt={item.name}
-            className="w-full h-full object-contain"
-          />
+        <div className="flex-shrink-0 border-b-2 border-black">
+          <div
+            className="w-full h-52"
+            style={{
+              backgroundImage: "repeating-conic-gradient(#e5e7eb 0% 25%, white 0% 50%)",
+              backgroundSize: "16px 16px",
+            }}
+          >
+            <img
+              src={getImageUrl(item.imageObjectPath)!}
+              alt={item.name}
+              className="w-full h-full object-contain"
+            />
+          </div>
+
+          {/* Clean Up Photo button — native iOS only */}
+          {isPhotoCleanupAvailable() && (
+            <div className="px-4 py-2 bg-white border-t-2 border-black/10">
+              <button
+                onClick={handleCleanUpPhoto}
+                disabled={cleanupProcessing}
+                className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                           font-bold uppercase border-2 border-black bg-white
+                           shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                           active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                           transition-all disabled:opacity-50"
+              >
+                {cleanupProcessing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Processing…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    Clean Up Photo
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       )}
+
+      {/* PhotoCompareSheet overlay */}
+      <AnimatePresence>
+        {compareData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex flex-col max-w-md mx-auto"
+          >
+            <PhotoCompareSheet
+              originalDataUrl={compareData.originalDataUrl}
+              cleanedDataUrl={compareData.cleanedDataUrl}
+              hadSubject={compareData.hadSubject}
+              onSelect={handleCompareSelect}
+              onCancel={() => setCompareData(null)}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Form */}
       <div className="flex-1 px-4 py-5 flex flex-col gap-4">
