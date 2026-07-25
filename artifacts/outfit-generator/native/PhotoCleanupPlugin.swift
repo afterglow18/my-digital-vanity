@@ -133,7 +133,6 @@ public class PhotoCleanupPlugin: CAPPlugin {
         // 1. Auto-adjust: exposure + tone mapping (skip red-eye and face-aware)
         let options: [CIImageAutoAdjustmentOption: Any] = [
             .enhance:  true,
-            .redeye:   false,
             .features: [],
         ]
         let adjustments = current.autoAdjustmentFilters(options: options)
