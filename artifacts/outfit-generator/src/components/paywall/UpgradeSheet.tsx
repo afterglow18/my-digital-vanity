@@ -1,11 +1,20 @@
 /**
- * UpgradeSheet — full-screen paywall, one page, no scroll.
- * Pink/rose palette to match app brand.
+ * UpgradeSheet — full-screen paywall.
+ *
+ * Loads packages from RevenueCat on mount BEFORE showing the CTA so the
+ * purchase button is always backed by a real StoreKit package. Live prices
+ * come from the store (not hardcoded) per App Store Review guidelines.
+ *
+ * States:
+ *   loading  — fetching packages from RevenueCat/StoreKit
+ *   error    — fetch failed; show message + retry button
+ *   ready    — packages loaded; normal paywall UI
  */
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
-import { X, Check } from "lucide-react";
+import { X, Check, RefreshCw } from "lucide-react";
 import { useEntitlements, type PurchaseResult } from "@/hooks/useEntitlements";
+import { fetchPackages, type RCPackage } from "@/lib/revenuecat";
 import type { PurchaseProduct } from "@/types/local";
 
 const PRIVACY_POLICY_URL = "https://app.notion.com/p/My-Digital-Collection-Privacy-Policy-39682db6065380b19dedcb108d4a0ef4?source=copy_link";
@@ -18,13 +27,13 @@ interface Props {
   onClose: () => void;
 }
 
-// ── Brand colours — Spin It button palette ───────────────────────────────────
-const ROSE       = "#E8B0B8";   // dusty pink light (Spin It button top)
-const ROSE_DARK  = "#D0909A";   // dusty pink mid (Spin It button bottom / border)
-const ROSE_LIGHT = "#FDF0F3";   // very light tint for selected card bg
-const ROSE_MID   = "#D0909A";   // border / badge colour
+// ── Brand colours ─────────────────────────────────────────────────────────────
+const ROSE       = "#E8B0B8";
+const ROSE_DARK  = "#D0909A";
+const ROSE_LIGHT = "#FDF0F3";
+const ROSE_MID   = "#D0909A";
 
-// ── Data ─────────────────────────────────────────────────────────────────────
+// ── Static plan metadata (prices come from StoreKit at runtime) ───────────────
 const FEATURES = [
   "Unlimited beauty products",
   "Unlimited saved looks",
@@ -32,34 +41,30 @@ const FEATURES = [
   "One-time payment options",
 ] as const;
 
-type Plan = {
-  id:     PurchaseProduct;
-  label:  string;
-  price:  string;
-  per:    string;
-  badge?: string;
-  perks:  string[];
+type PlanMeta = {
+  id:      PurchaseProduct;
+  label:   string;
+  per:     string;
+  badge?:  string;
+  perks:   string[];
 };
 
-const PLANS: Plan[] = [
+const PLAN_META: PlanMeta[] = [
   {
     id:    "monthly",
     label: "MONTHLY",
-    price: "$1.99",
     per:   "/month",
     perks: ["Cancel anytime", "Billed monthly"],
   },
   {
     id:    "yearly",
     label: "YEARLY",
-    price: "$19.99",
     per:   "/year",
     perks: ["Save 17%", "Billed yearly"],
   },
   {
     id:    "lifetime",
     label: "LIFETIME",
-    price: "$9.99",
     per:   "one-time",
     badge: "BEST VALUE",
     perks: ["Pay once", "Yours forever"],
@@ -69,17 +74,56 @@ const PLANS: Plan[] = [
 // ── Component ─────────────────────────────────────────────────────────────────
 export function UpgradeSheet({ onClose }: Props) {
   const { purchase, restore } = useEntitlements();
-  const [selected, setSelected] = useState<PurchaseProduct>("lifetime");
-  const [status, setStatus]     = useState<"idle" | "pending" | "restoring" | "error">("idle");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [selected,  setSelected]  = useState<PurchaseProduct>("lifetime");
+  const [status,    setStatus]    = useState<"idle" | "pending" | "restoring" | "error">("idle");
+  const [errorMsg,  setErrorMsg]  = useState<string | null>(null);
 
-  const selectedPlan = PLANS.find(p => p.id === selected)!;
+  // Package loading state
+  const [packages,      setPackages]      = useState<RCPackage[]>([]);
+  const [loadingPkgs,   setLoadingPkgs]   = useState(true);
+  const [pkgError,      setPkgError]      = useState<string | null>(null);
+
+  // ── Load packages on mount ─────────────────────────────────────────────────
+  const loadPackages = useCallback(async () => {
+    setLoadingPkgs(true);
+    setPkgError(null);
+    console.log("[UpgradeSheet] Loading packages from RevenueCat...");
+    try {
+      const pkgs = await fetchPackages();
+      console.log(`[UpgradeSheet] ${pkgs.length} package(s) loaded:`, pkgs.map(p => `${p.product}=${p.priceString}`).join(", "));
+      setPackages(pkgs);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[UpgradeSheet] Failed to load packages:", msg);
+      setPkgError(msg);
+    } finally {
+      setLoadingPkgs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPackages();
+  }, [loadPackages]);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  /** Get live price for a product, or fallback label if not loaded yet */
+  function priceFor(product: PurchaseProduct): string {
+    const pkg = packages.find(p => p.product === product);
+    return pkg?.priceString ?? "—";
+  }
 
   const handlePurchase = useCallback(async () => {
     if (status === "pending" || status === "restoring") return;
+    if (loadingPkgs) {
+      console.warn("[UpgradeSheet] Tapped purchase while packages still loading");
+      return;
+    }
     setErrorMsg(null);
     setStatus("pending");
+    console.log(`[UpgradeSheet] Starting purchase for '${selected}'...`);
     const result: PurchaseResult = await purchase(selected);
+    console.log(`[UpgradeSheet] Purchase result: ${result}`);
     if (result === "success") {
       onClose();
     } else if (result === "unavailable") {
@@ -89,13 +133,15 @@ export function UpgradeSheet({ onClose }: Props) {
       // cancelled — user dismissed the native sheet
       setStatus("idle");
     }
-  }, [status, purchase, selected, onClose]);
+  }, [status, loadingPkgs, purchase, selected, onClose]);
 
   const handleRestore = useCallback(async () => {
     if (status !== "idle") return;
     setErrorMsg(null);
     setStatus("restoring");
+    console.log("[UpgradeSheet] Restoring purchases...");
     const result: PurchaseResult = await restore();
+    console.log(`[UpgradeSheet] Restore result: ${result}`);
     if (result === "success") {
       onClose();
     } else if (result === "unavailable") {
@@ -107,6 +153,49 @@ export function UpgradeSheet({ onClose }: Props) {
     }
   }, [status, restore, onClose]);
 
+  const selectedPrice = priceFor(selected);
+  const ctaBusy = status === "pending" || status === "restoring";
+
+  // ── Package error state ───────────────────────────────────────────────────
+  if (!loadingPkgs && pkgError) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: "100%" }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: "100%" }}
+        transition={{ type: "spring", damping: 28, stiffness: 240 }}
+        className="fixed inset-0 z-[80] flex flex-col items-center justify-center gap-5 max-w-md mx-auto overflow-hidden"
+        style={{ background: "#FDF5F9" }}
+      >
+        <button
+          onClick={onClose}
+          style={{ top: "calc(env(safe-area-inset-top) + 10px)" }}
+          className="absolute right-3 top-3 w-8 h-8 rounded-full bg-white/90
+                     flex items-center justify-center border border-black/10"
+        >
+          <X className="w-4 h-4 text-black/60" />
+        </button>
+
+        <span className="text-5xl">💄</span>
+        <div className="text-center px-8">
+          <p className="font-black text-lg uppercase tracking-tight mb-1">Plans unavailable</p>
+          <p className="text-sm text-black/50 font-medium">
+            We couldn't load subscription plans right now. Check your connection and try again.
+          </p>
+        </div>
+        <button
+          onClick={loadPackages}
+          className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-sm uppercase tracking-wide"
+          style={{ background: "linear-gradient(to bottom, #E8B0B8, #D0909A)", border: "2px solid #D0909A" }}
+        >
+          <RefreshCw className="w-4 h-4" />
+          Try Again
+        </button>
+      </motion.div>
+    );
+  }
+
+  // ── Main paywall UI ────────────────────────────────────────────────────────
   return (
     <motion.div
       initial={{ opacity: 0, y: "100%" }}
@@ -125,9 +214,7 @@ export function UpgradeSheet({ onClose }: Props) {
           minHeight: 64,
           backgroundColor: "#E8B0B8",
           backgroundImage: [
-            // horizontal stripes — warm charcoal, softer opacity like app icon plaid
             "repeating-linear-gradient(0deg, transparent 0px, transparent 20px, rgba(60,30,40,0.38) 20px, rgba(60,30,40,0.38) 30px, rgba(255,255,255,0.55) 30px, rgba(255,255,255,0.55) 32px, rgba(60,30,40,0.38) 32px, rgba(60,30,40,0.38) 42px, transparent 42px, transparent 62px)",
-            // vertical stripes
             "repeating-linear-gradient(90deg, transparent 0px, transparent 20px, rgba(60,30,40,0.38) 20px, rgba(60,30,40,0.38) 30px, rgba(255,255,255,0.55) 30px, rgba(255,255,255,0.55) 32px, rgba(60,30,40,0.38) 32px, rgba(60,30,40,0.38) 42px, transparent 42px, transparent 62px)",
           ].join(", "),
         }}
@@ -193,63 +280,77 @@ export function UpgradeSheet({ onClose }: Props) {
       <p className="text-center text-[10px] font-bold uppercase tracking-widest text-black/35 mb-2.5 flex-shrink-0">
         Choose your plan
       </p>
-      <div className="px-5 flex gap-2 mb-4 flex-shrink-0">
-        {PLANS.map(plan => {
-          const active = selected === plan.id;
-          return (
-            <button
+
+      {/* Loading skeleton */}
+      {loadingPkgs ? (
+        <div className="px-5 flex gap-2 mb-4 flex-shrink-0">
+          {PLAN_META.map(plan => (
+            <div
               key={plan.id}
-              onClick={() => setSelected(plan.id)}
-              className="flex-1 flex flex-col items-start p-3 rounded-xl text-left transition-all"
-              style={{
-                position:  "relative",
-                background: active ? ROSE_LIGHT : "white",
-                border:     active ? `2px solid ${ROSE}` : "2px solid #E8D5DF",
-                boxShadow:  active ? `3px 3px 0 ${ROSE}` : "none",
-              }}
-            >
-              {/* Best value badge */}
-              {plan.badge && (
-                <span
-                  className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap
-                             text-[8px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full"
-                  style={{ background: ROSE, color: "#fff" }}
-                >
-                  {plan.badge}
-                </span>
-              )}
+              className="flex-1 h-28 rounded-xl animate-pulse"
+              style={{ background: "#F0E4E8" }}
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="px-5 flex gap-2 mb-4 flex-shrink-0">
+          {PLAN_META.map(plan => {
+            const active = selected === plan.id;
+            const livePrice = priceFor(plan.id);
+            return (
+              <button
+                key={plan.id}
+                onClick={() => setSelected(plan.id)}
+                className="flex-1 flex flex-col items-start p-3 rounded-xl text-left transition-all"
+                style={{
+                  position:   "relative",
+                  background:  active ? ROSE_LIGHT : "white",
+                  border:      active ? `2px solid ${ROSE}` : "2px solid #E8D5DF",
+                  boxShadow:   active ? `3px 3px 0 ${ROSE}` : "none",
+                }}
+              >
+                {plan.badge && (
+                  <span
+                    className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap
+                               text-[8px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full"
+                    style={{ background: ROSE, color: "#fff" }}
+                  >
+                    {plan.badge}
+                  </span>
+                )}
 
-              <span className="text-[9px] font-black uppercase tracking-widest text-black/45 mb-0.5">
-                {plan.label}
-              </span>
-              <span className="font-black text-xl leading-none">
-                {plan.price}
-              </span>
-              <span className="text-[10px] text-black/35 font-medium mb-2">
-                {plan.per}
-              </span>
-
-              {plan.perks.map(perk => (
-                <span key={perk} className="flex items-center gap-1 text-[9px] font-semibold text-black/55">
-                  <Check
-                    className="w-2.5 h-2.5 flex-shrink-0"
-                    strokeWidth={3}
-                    style={{ color: active ? ROSE : "#aaa" }}
-                  />
-                  {perk}
+                <span className="text-[9px] font-black uppercase tracking-widest text-black/45 mb-0.5">
+                  {plan.label}
                 </span>
-              ))}
-            </button>
-          );
-        })}
-      </div>
+                {/* Live price from StoreKit — required by App Store guidelines */}
+                <span className="font-black text-xl leading-none">
+                  {livePrice}
+                </span>
+                <span className="text-[10px] text-black/35 font-medium mb-2">
+                  {plan.per}
+                </span>
+
+                {plan.perks.map(perk => (
+                  <span key={perk} className="flex items-center gap-1 text-[9px] font-semibold text-black/55">
+                    <Check
+                      className="w-2.5 h-2.5 flex-shrink-0"
+                      strokeWidth={3}
+                      style={{ color: active ? ROSE : "#aaa" }}
+                    />
+                    {perk}
+                  </span>
+                ))}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* ── CTA ────────────────────────────────────────────────────────── */}
       <div
         className="px-5 flex flex-col gap-2.5 flex-shrink-0 mt-auto"
         style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
       >
-        {/* Error message */}
         {errorMsg && (
           <p className="text-center text-xs font-semibold text-red-500 -mb-1">
             {errorMsg}
@@ -258,33 +359,35 @@ export function UpgradeSheet({ onClose }: Props) {
 
         <button
           onClick={handlePurchase}
-          disabled={status === "pending" || status === "restoring"}
+          disabled={ctaBusy || loadingPkgs}
           className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
                      text-black transition-all active:translate-y-0.5 active:shadow-none
                      disabled:opacity-60 disabled:cursor-not-allowed"
           style={{
-            background: (status === "pending" || status === "restoring") ? "#D0909A" : "linear-gradient(to bottom, #E8B0B8, #D0909A)",
-            border:     "2.5px solid #D0909A",
-            boxShadow:  (status === "pending" || status === "restoring") ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
+            background:  ctaBusy ? ROSE_DARK : `linear-gradient(to bottom, ${ROSE}, ${ROSE_DARK})`,
+            border:      `2.5px solid ${ROSE_DARK}`,
+            boxShadow:   ctaBusy ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
             letterSpacing: "0.04em",
           }}
         >
-          {status === "pending"
-            ? "Opening checkout…"
-            : status === "restoring"
-              ? "Restoring…"
-              : selected === "monthly"
-                ? `UNLOCK MONTHLY – ${selectedPlan.price} ›`
-                : selected === "yearly"
-                  ? `UNLOCK YEARLY – ${selectedPlan.price} ›`
-                  : `UNLOCK FOREVER – ${selectedPlan.price} ›`}
+          {loadingPkgs
+            ? "Loading plans…"
+            : status === "pending"
+              ? "Opening checkout…"
+              : status === "restoring"
+                ? "Restoring…"
+                : selected === "monthly"
+                  ? `UNLOCK MONTHLY – ${selectedPrice} ›`
+                  : selected === "yearly"
+                    ? `UNLOCK YEARLY – ${selectedPrice} ›`
+                    : `UNLOCK FOREVER – ${selectedPrice} ›`}
         </button>
 
         {/* Restore + Maybe Later */}
         <div className="flex items-center justify-center gap-4">
           <button
             onClick={handleRestore}
-            disabled={status === "pending" || status === "restoring"}
+            disabled={ctaBusy || loadingPkgs}
             className="text-xs font-bold text-black/40 underline underline-offset-2
                        hover:text-black/60 transition-colors disabled:opacity-40"
           >

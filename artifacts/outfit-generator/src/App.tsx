@@ -16,13 +16,11 @@ import { BiometricLockScreen } from '@/components/BiometricLockScreen';
 import { AnimatePresence } from 'framer-motion';
 import { App as CapApp } from '@capacitor/app';
 
-// Initialise RevenueCat then immediately sync entitlements from the server
-try {
-  initRevenueCat();
-  syncTierFromRevenueCat().catch(() => {}); // launch check
-} catch (e) {
-  console.error('[RevenueCat] Init failed:', e);
-}
+// Initialise RevenueCat, then sync entitlements AFTER configure() resolves.
+// Using .then() ensures syncTierFromRevenueCat never races with configure().
+initRevenueCat()
+  .then(() => syncTierFromRevenueCat())
+  .catch((e) => console.error('[RevenueCat] Init/sync failed:', e));
 
 function NotFound() {
   return (

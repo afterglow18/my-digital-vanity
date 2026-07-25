@@ -6,14 +6,14 @@
  * after purchase, and after restore — so refunds / expiry auto-downgrade.
  */
 
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
-import { Purchases } from '@revenuecat/purchases-capacitor';
+import { useCallback, useSyncExternalStore } from 'react';
 import type { Tier, TierCapabilities, PurchaseProduct } from '@/types/local';
 import { TIER_CAPS, PRODUCT_TIER } from '@/types/local';
 import {
-  ENTITLEMENT_ID,
   PRODUCT_TIER_MAP,
   getPackageForProduct,
+  getActiveEntitlement,
+  purchaseRCPackage,
   restoreAndCheck,
 } from '@/lib/revenuecat';
 
@@ -70,29 +70,40 @@ export function setGlobalTier(t: Tier, product?: PurchaseProduct): void {
 
 /**
  * Ask RevenueCat for the current CustomerInfo and sync the in-app tier.
- * Called on launch, foreground return, after purchase, and after restore.
+ * Uses getActiveEntitlement() which calls ensureInitialized() internally —
+ * so this is safe to call at any point after initRevenueCat() is invoked.
+ *
  * On network/SDK error the cached value is kept — never punish users for
  * a bad connection.  On confirmed no-entitlement, downgrades to free so
  * refunds and expiries take effect automatically.
  */
 export async function syncTierFromRevenueCat(): Promise<void> {
   try {
-    const { customerInfo } = await Purchases.getCustomerInfo();
-    const active = ENTITLEMENT_ID in (customerInfo.entitlements?.active ?? {});
+    const active = await getActiveEntitlement();
+    console.log(`[Entitlements] syncTierFromRevenueCat — active: ${active}, current tier: ${_currentTier}`);
     if (active) {
       // Only upgrade, never silently downgrade premium → unlock from sync
-      if (_currentTier === 'free') setGlobalTier('unlock');
+      if (_currentTier === 'free') {
+        console.log('[Entitlements] Upgrading tier to unlock (entitlement active)');
+        setGlobalTier('unlock');
+      }
     } else {
       // Confirmed no active entitlement — downgrade (handles refunds & expiry).
       // BUT: skip the downgrade during the grace window after a purchase so
       // RevenueCat propagation delay doesn't immediately wipe a real purchase.
       const withinGrace = Date.now() - _lastPurchaseAt < PURCHASE_GRACE_MS;
       if (!withinGrace) {
+        if (_currentTier !== 'free') {
+          console.log('[Entitlements] Downgrading tier to free (no active entitlement, grace window passed)');
+        }
         setGlobalTier('free');
+      } else {
+        console.log(`[Entitlements] Within grace window (${Math.round((PURCHASE_GRACE_MS - (Date.now() - _lastPurchaseAt)) / 1000)}s remaining) — keeping tier: ${_currentTier}`);
       }
     }
-  } catch {
+  } catch (e) {
     // SDK not configured on web, or network failure — keep cached value
+    console.warn('[Entitlements] syncTierFromRevenueCat error (keeping cached tier):', e);
   }
 }
 
@@ -127,12 +138,10 @@ export function useEntitlements() {
           return 'unavailable';
         }
 
-        // If purchasePackage completes without throwing, the purchase succeeded.
-        // The SDK throws for user-cancelled and payment errors — a clean return
-        // means Apple accepted payment regardless of what entitlements.active
-        // contains (which can differ if the entitlement ID in the RC dashboard
-        // doesn't match ENTITLEMENT_ID, or due to propagation delay).
-        await Purchases.purchasePackage({ aPackage: pkg });
+        // purchaseRCPackage calls ensureInitialized() internally, so there is
+        // no race with configure(). On success it returns customerInfo; on
+        // cancel/error it throws (caught below).
+        await purchaseRCPackage(pkg);
 
         _lastPurchaseAt = Date.now();
         const newTier: Tier = PRODUCT_TIER_MAP[product] ?? PRODUCT_TIER[product] ?? 'unlock';
