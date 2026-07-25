@@ -11,9 +11,6 @@ import { queryClient } from '@/lib/queryClient';
 import { useState, useEffect } from 'react';
 import { initRevenueCat } from '@/lib/revenuecat';
 import { syncTierFromRevenueCat } from '@/hooks/useEntitlements';
-import { BiometricLockProvider, useBiometricLock } from '@/lib/biometricLock';
-import { BiometricLockScreen } from '@/components/BiometricLockScreen';
-import { AnimatePresence } from 'framer-motion';
 import { App as CapApp } from '@capacitor/app';
 
 // Initialise RevenueCat, then sync entitlements AFTER configure() resolves.
@@ -49,15 +46,11 @@ function Router() {
 function AppContent() {
   const isPreview = new URLSearchParams(window.location.search).get('preview') === '1';
   const [entered, setEntered] = useState<boolean>(() => isPreview);
-  const { isLocked } = useBiometricLock();
 
   return (
     <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
       <Router />
       {!entered && <WelcomePage onEnter={() => setEntered(true)} />}
-      <AnimatePresence>
-        {isLocked && <BiometricLockScreen />}
-      </AnimatePresence>
     </WouterRouter>
   );
 }
@@ -72,11 +65,7 @@ function AppShell() {
     return () => { listenerPromise.then(h => h.remove()); };
   }, []);
 
-  return (
-    <BiometricLockProvider>
-      <AppContent />
-    </BiometricLockProvider>
-  );
+  return <AppContent />;
 }
 
 function App() {

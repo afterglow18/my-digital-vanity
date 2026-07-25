@@ -4,13 +4,12 @@
  */
 
 import React, { useRef, useState, useCallback } from 'react';
-import { Download, Upload, RefreshCw, ShieldCheck } from 'lucide-react';
+import { Download, Upload, RefreshCw } from 'lucide-react';
 import { exportBackup, importBackup } from '@/lib/backup';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEntitlements, readStoredProduct } from '@/hooks/useEntitlements';
 import { AnimatePresence, motion } from 'framer-motion';
 import { UpgradeSheet } from '@/components/paywall/UpgradeSheet';
-import { useBiometricLock } from '@/lib/biometricLock';
 
 const APP_VERSION = '1.0.0';
 
@@ -69,8 +68,6 @@ export default function AccountPage() {
   const { tier, restore } = useEntitlements();
   const [showUpgrade, setShowUpgrade] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  const { isLockEnabled, enableLock, disableLock } = useBiometricLock();
-  const [lockBusy, setLockBusy] = useState(false);
 
   const handleRestore = useCallback(async () => {
     if (restoring) return;
@@ -83,17 +80,6 @@ export default function AccountPage() {
       alert('No previous purchases found.');
     }
   }, [restore, restoring]);
-
-  const handleLockToggle = useCallback(async () => {
-    if (lockBusy) return;
-    setLockBusy(true);
-    if (isLockEnabled) {
-      await disableLock();
-    } else {
-      await enableLock();
-    }
-    setLockBusy(false);
-  }, [lockBusy, isLockEnabled, enableLock, disableLock]);
 
   const [backupStatus, setBackupStatus] = useState<BackupStatus>('idle');
   const [errorMsg, setErrorMsg]         = useState<string | null>(null);
@@ -269,70 +255,6 @@ export default function AccountPage() {
               className="hidden"
               onChange={handleFileChange}
             />
-          </div>
-        </Card>
-
-        {/* ── PRIVACY & SECURITY ───────────────────────────────────────────── */}
-        <Card>
-          <div className="px-4 pt-4 pb-5 flex flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-6 h-6" style={{ color: ROSE_DARK }} />
-              <h2 className="font-black text-base uppercase tracking-wide">Privacy &amp; Security</h2>
-            </div>
-
-            {/* Lock toggle row */}
-            <div className="flex items-center justify-between py-1">
-              <div className="flex flex-col gap-0.5">
-                <span className="text-sm font-bold text-black">
-                  Lock with Face ID / Touch ID
-                </span>
-                <span className="text-xs text-black/50 leading-snug">
-                  Require biometrics to open the app
-                </span>
-              </div>
-
-              {/* Toggle switch */}
-              <button
-                onClick={handleLockToggle}
-                disabled={lockBusy}
-                aria-label={isLockEnabled ? 'Disable biometric lock' : 'Enable biometric lock'}
-                style={{
-                  width: 50,
-                  height: 28,
-                  borderRadius: 14,
-                  border: '2px solid #000',
-                  background: isLockEnabled
-                    ? 'linear-gradient(to right, #E8B0B8, #D0909A)'
-                    : '#e5e5e5',
-                  position: 'relative',
-                  flexShrink: 0,
-                  cursor: lockBusy ? 'default' : 'pointer',
-                  opacity: lockBusy ? 0.5 : 1,
-                  transition: 'background 0.2s',
-                  boxShadow: '1px 1px 0 #000',
-                }}
-              >
-                <span
-                  style={{
-                    position: 'absolute',
-                    top: 2,
-                    left: isLockEnabled ? 22 : 2,
-                    width: 20,
-                    height: 20,
-                    borderRadius: '50%',
-                    background: '#fff',
-                    border: '1.5px solid #000',
-                    transition: 'left 0.2s',
-                    boxShadow: '1px 1px 0 rgba(0,0,0,0.2)',
-                  }}
-                />
-              </button>
-            </div>
-
-            <p className="text-xs text-black/40 leading-snug">
-              When enabled, you'll be asked to authenticate with Face ID or Touch ID
-              each time you open the app or return from the background.
-            </p>
           </div>
         </Card>
 
