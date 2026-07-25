@@ -33,6 +33,14 @@ const ROSE_DARK  = "#D0909A";
 const ROSE_LIGHT = "#FDF0F3";
 const ROSE_MID   = "#D0909A";
 
+// ── Fallback prices shown in web preview (StoreKit prices used on native) ────
+const FALLBACK_PRICES: Record<PurchaseProduct, string> = {
+  monthly:  "$1.99",
+  yearly:   "$19.99",
+  lifetime: "$9.99",
+  premium:  "$9.99",
+};
+
 // ── Static plan metadata (prices come from StoreKit at runtime) ───────────────
 const FEATURES = [
   "Unlimited beauty products",
@@ -107,10 +115,10 @@ export function UpgradeSheet({ onClose }: Props) {
 
   // ── Helpers ────────────────────────────────────────────────────────────────
 
-  /** Get live price for a product, or fallback label if not loaded yet */
+  /** Get live StoreKit price, or fallback for web preview */
   function priceFor(product: PurchaseProduct): string {
     const pkg = packages.find(p => p.product === product);
-    return pkg?.priceString ?? "—";
+    return pkg?.priceString ?? FALLBACK_PRICES[product];
   }
 
   const handlePurchase = useCallback(async () => {
