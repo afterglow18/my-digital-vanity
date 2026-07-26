@@ -65,7 +65,12 @@ export async function blobToBase64(blob: Blob, maxPx = 1200): Promise<string> {
       const canvas = document.createElement("canvas");
       canvas.width  = Math.round(img.naturalWidth  * scale);
       canvas.height = Math.round(img.naturalHeight * scale);
-      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const ctx = canvas.getContext("2d")!;
+      // Fill white before drawing so transparent PNGs (already-cleaned photos)
+      // don't produce a black-background JPEG that confuses the Vision framework.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
       const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
       resolve(dataUrl.split(",")[1]); // strip "data:image/jpeg;base64,"
     };

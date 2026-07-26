@@ -165,7 +165,9 @@ export function PhotoCompareSheet({
                 Unavailable
               </p>
               <p className="text-[10px] text-black/25 text-center leading-snug">
-                Try again after updating the app
+                {cleanupError?.toLowerCase().includes("only available")
+                  ? "Available in the iOS app"
+                  : "Couldn't process this photo"}
               </p>
             </div>
           )}
