@@ -789,16 +789,21 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             </div>
           )}
 
-          {/* ── ENCODING / PREVIEW ────────────────────────────────────────────────
-               Both phases share one DOM subtree so PhotoCompareSheet is never
-               unmounted between them. The <img> inside it receives its src while
-               the spinner overlay is still covering it, giving WebKit time to
-               decode the bitmap before the spinner is removed. Removing the
-               spinner then reveals an already-painted compare sheet — no blank. */}
-          {(phase === "encoding" || phase === "preview") && (
+          {/* ── ENCODING / PREVIEW / BATCH-SAVING ────────────────────────────────
+               All three phases share one DOM subtree so PhotoCompareSheet is
+               never unmounted mid-batch. Unmounting it causes the slide-up
+               animation to restart and the spinner to disappear over a
+               half-rendered sheet, producing the white-screen gap the user sees.
+
+               When phase === "uploading" && batchTotal > 0 we are saving a
+               photo between two compare screens. The spinner stays on top (with
+               "Saving…" copy) and the compare sheet stays mounted underneath so
+               there is nothing to re-animate when the next encode begins. */}
+          {(phase === "encoding" || phase === "preview" ||
+            (phase === "uploading" && batchTotal > 0)) && (
             <div className="flex-1 relative min-h-0 flex flex-col">
 
-              {/* Compare sheet — always mounted once encoding starts */}
+              {/* Compare sheet — stays mounted for the lifetime of the batch */}
               <div className="absolute inset-0 flex flex-col">
                 <PhotoCompareSheet
                   originalDataUrl={originalDataUrl}
@@ -813,10 +818,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 />
               </div>
 
-              {/* Spinner overlay — covers the compare sheet while encoding.
-                  Removed when phase becomes "preview"; compare sheet underneath
-                  is already decoded and painted. */}
-              {phase === "encoding" && (
+              {/* Spinner overlay — covers the compare sheet while encoding or
+                  saving. Shows "Processing…" while encoding the next photo and
+                  "Saving…" while writing the chosen version to storage. Removed
+                  only when phase becomes "preview" (image decoded, ready to show). */}
+              {(phase === "encoding" || (phase === "uploading" && batchTotal > 0)) && (
                 <div
                   className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 p-6"
                   style={{ background: "#f9f4ee" }}
@@ -829,10 +835,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   </div>
                   <div className="text-center">
                     <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                      Processing…
+                      {phase === "uploading" ? "Saving…" : "Processing…"}
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      Getting your photo ready
+                      {phase === "uploading" ? "Hang on a moment." : "Getting your photo ready"}
                     </p>
                   </div>
                 </div>
@@ -840,8 +846,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             </div>
           )}
 
-          {/* ── UPLOADING ── */}
-          {phase === "uploading" && (
+          {/* ── UPLOADING (single photo / retry path only) ── */}
+          {phase === "uploading" && batchTotal === 0 && (
             <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
               <div className="w-28 h-28 border-4 border-black rounded-3xl bg-white
                               flex items-center justify-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
