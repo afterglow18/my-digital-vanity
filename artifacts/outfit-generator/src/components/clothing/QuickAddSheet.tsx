@@ -14,6 +14,7 @@
  * Multi-file upload — photos save immediately (no comparison step).
  */
 import React, { useRef, useState, useCallback, useEffect } from "react";
+import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
@@ -359,24 +360,25 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     const origDataUrl = await blobToDataUrl(png);
     if (bgGenRef.current !== myGen) return;
 
-    // Set originalDataUrl NOW while still in "encoding" phase.
-    // The compare sheet is already mounted in the DOM (hidden behind the spinner
-    // overlay) so its <img> element gets the src immediately and WebKit begins
-    // decoding in parallel. By the time we remove the spinner the bitmap is ready.
+    // flushSync forces React to process setOriginalDataUrl synchronously —
+    // the in-DOM <img> inside the compare sheet gets its src RIGHT NOW while
+    // the encoding spinner overlay is still covering it. Without this, React
+    // batches setOriginalDataUrl + setPhase("preview") into one render, the
+    // spinner disappears, and WebKit decodes the bitmap with nothing showing.
     pendingMeta.current = { countOffset: 0 };
-    setOriginalDataUrl(origDataUrl);
-
-    // Belt-and-suspenders: also pre-decode via new Image() in case WKWebView
-    // doesn't share the decoded bitmap between the in-DOM <img> and a JS Image.
-    await new Promise<void>((resolve) => {
-      const img = new Image();
-      img.onload  = () => resolve();
-      img.onerror = () => resolve();
-      img.src = origDataUrl;
-    });
+    flushSync(() => setOriginalDataUrl(origDataUrl));
     if (bgGenRef.current !== myGen) return;
 
-    // Spinner goes away — compare sheet is already painted underneath.
+    // img.decode() waits for the FULL bitmap decode, not just header parsing.
+    // new Image().onload fires after headers (intrinsic size known) but before
+    // the pixel data is ready — that's why the previous approach didn't work.
+    // After decode() resolves the image is ready to paint in the next frame.
+    const img = new Image();
+    img.src = origDataUrl;
+    await img.decode().catch(() => {});
+    if (bgGenRef.current !== myGen) return;
+
+    // Spinner overlay removed — compare sheet underneath is already decoded.
     setPhase("preview");
 
     // Background removal runs while the user already sees the original.
