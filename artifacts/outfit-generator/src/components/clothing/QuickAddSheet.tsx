@@ -40,6 +40,25 @@ interface UploadProgress { done: number; total: number; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+async function fileToThumbnail(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement("canvas");
+      const SIZE = 120;
+      const scale = Math.min(SIZE / img.naturalWidth, SIZE / img.naturalHeight, 1);
+      canvas.width  = Math.round(img.naturalWidth  * scale);
+      canvas.height = Math.round(img.naturalHeight * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.75));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(""); };
+    img.src = url;
+  });
+}
+
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -80,10 +99,11 @@ const PHOTO_TIPS = [
 ] as const;
 
 export function QuickAddSheet({ open, onOpenChange, category, existingCount, onCreated }: Props) {
-  const [phase,       setPhase]       = useState<Phase>("pick");
-  const [errorMsg,    setErrorMsg]    = useState<string | null>(null);
-  const [progress,    setProgress]    = useState<UploadProgress | null>(null);
-  const [failedFiles, setFailedFiles] = useState<File[]>([]);
+  const [phase,              setPhase]             = useState<Phase>("pick");
+  const [errorMsg,           setErrorMsg]          = useState<string | null>(null);
+  const [progress,           setProgress]          = useState<UploadProgress | null>(null);
+  const [failedFiles,        setFailedFiles]        = useState<File[]>([]);
+  const [failedThumbnails,   setFailedThumbnails]   = useState<string[]>([]);
 
   // Comparison state
   const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
@@ -102,6 +122,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setPhase("pick");
     setErrorMsg(null);
     setFailedFiles([]);
+    setFailedThumbnails([]);
     setOriginalDataUrl("");
     setCleanedDataUrl("");
     setCleanupError(null);
@@ -225,11 +246,15 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
     setProgress(null);
     if (succeeded.length === 0) {
-      setErrorMsg("Could not save the photos. Please try again.");
+      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
+      setFailedThumbnails(thumbs);
       setFailedFiles(errored);
+      setErrorMsg("Could not save the photos. Please try again.");
       setPhase("pick");
     } else if (errored.length > 0) {
       // Partial failure — keep sheet open so the user can retry just the failures
+      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
+      setFailedThumbnails(thumbs);
       setErrorMsg(
         `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
         `${errored.length} couldn't be added.`
@@ -238,6 +263,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setPhase("pick");
     } else {
       setFailedFiles([]);
+      setFailedThumbnails([]);
       handleClose();
     }
   }, [handleFile, handleClose]);
@@ -300,10 +326,50 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
                     {errorMsg}
                   </p>
+
+                  {/* Thumbnail strip for failed photos */}
+                  {failedThumbnails.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollSnapType: "x mandatory" }}>
+                      {failedThumbnails.map((thumb, idx) => {
+                        const file = failedFiles[idx];
+                        return (
+                          <div
+                            key={idx}
+                            className="flex-shrink-0 flex flex-col items-center gap-1"
+                            style={{ scrollSnapAlign: "start", width: 72 }}
+                          >
+                            <div className="relative w-16 h-16 rounded-xl border-2 border-amber-400 overflow-hidden bg-amber-50">
+                              {thumb ? (
+                                <img
+                                  src={thumb}
+                                  alt={file?.name ?? `Photo ${idx + 1}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-2xl">🖼️</div>
+                              )}
+                              {/* Failure badge */}
+                              <div className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-amber-500 border border-white flex items-center justify-center">
+                                <span className="text-white text-[9px] font-bold leading-none">!</span>
+                              </div>
+                            </div>
+                            <p className="text-[10px] text-amber-700 text-center leading-tight max-w-[72px] truncate px-0.5">
+                              {file?.name ?? `Photo ${idx + 1}`}
+                            </p>
+                            <p className="text-[10px] text-amber-500 text-center leading-tight">
+                              Failed to save
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {failedFiles.length > 0 && (
                     <button
                       onClick={() => {
                         setErrorMsg(null);
+                        setFailedThumbnails([]);
                         handleFiles(failedFiles);
                       }}
                       className="w-full py-2.5 border-2 border-black rounded-xl bg-primary font-display font-bold text-sm uppercase tracking-tight
