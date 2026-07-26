@@ -9,6 +9,19 @@
  * then is cached permanently by the browser / WKWebView cache.
  */
 import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
+// onnxruntime-web is a peer dependency shared with @imgly/background-removal.
+// The TS error below is a known package.json exports issue in ort 1.x; the
+// import still resolves and affects the same singleton used by the imgly library.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore
+import * as ort from "onnxruntime-web";
+
+// Force WASM inference into a proxy worker so the main thread stays free for
+// UI events (button taps, Cancel) while removal runs. Without this, the 2-5s
+// WASM inference blocks all JS, making every button appear unresponsive.
+// The imgly library only sets proxy=true when device="gpu"; we set it here
+// for the default WASM path so it applies on every platform.
+(ort as { env: { wasm: { proxy: boolean } } }).env.wasm.proxy = true;
 
 export type RemovalProgress =
   | { stage: "loading"; pct: number }
