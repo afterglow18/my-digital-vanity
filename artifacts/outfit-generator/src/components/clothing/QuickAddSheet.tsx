@@ -130,6 +130,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [cleanupError,    setCleanupError]    = useState<string | null>(null);
   const pendingMeta = useRef<{ countOffset: number } | null>(null);
 
+  const [showAbandonConfirm, setShowAbandonConfirm] = useState(false);
+
   const cameraInputRef  = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -175,7 +177,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setDragOverIndex(null);
   }, [dragIndex, dragOverIndex]);
 
-  const handleClose = useCallback(() => {
+  const confirmClose = useCallback(() => {
+    setShowAbandonConfirm(false);
     setPhase("pick");
     setErrorMsg(null);
     setFailedFiles([]);
@@ -186,6 +189,14 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     pendingMeta.current = null;
     onOpenChange(false);
   }, [onOpenChange]);
+
+  const handleClose = useCallback(() => {
+    if (failedFiles.length > 0) {
+      setShowAbandonConfirm(true);
+      return;
+    }
+    confirmClose();
+  }, [failedFiles.length, confirmClose]);
 
   const saveDataUrl = useCallback(async (dataUrl: string, countOffset: number): Promise<true | false | "quota"> => {
     const label    = CATEGORY_LABELS[category];
@@ -661,6 +672,58 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
         </AnimatePresence>
       </div>
+
+      {/* Abandon-confirmation overlay */}
+      <AnimatePresence>
+        {showAbandonConfirm && (
+          <motion.div
+            key="abandon-confirm"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-10 flex items-end justify-center"
+            style={{ background: "rgba(0,0,0,0.45)" }}
+          >
+            <motion.div
+              initial={{ y: 40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 40, opacity: 0 }}
+              transition={{ type: "spring", damping: 28, stiffness: 260 }}
+              className="w-full max-w-md bg-white border-t-4 border-black rounded-t-3xl p-6 flex flex-col gap-4"
+              style={{ paddingBottom: "max(24px, env(safe-area-inset-bottom))" }}
+            >
+              <div className="text-center">
+                <p className="font-display font-bold text-lg uppercase tracking-tight leading-snug">
+                  Leave without retrying?
+                </p>
+                <p className="text-sm text-black/60 mt-1">
+                  {failedFiles.length === 1
+                    ? "1 photo wasn't saved and will be discarded."
+                    : `${failedFiles.length} photos weren't saved and will be discarded.`}
+                </p>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowAbandonConfirm(false)}
+                  className="flex-1 py-3 border-2 border-black rounded-xl bg-white font-display font-bold text-sm uppercase tracking-tight
+                             shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
+                             active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                >
+                  Keep retrying
+                </button>
+                <button
+                  onClick={confirmClose}
+                  className="flex-1 py-3 border-2 border-black rounded-xl bg-black text-white font-display font-bold text-sm uppercase tracking-tight
+                             shadow-[3px_3px_0px_0px_rgba(0,0,0,0.4)]
+                             active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                >
+                  Discard & close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Hidden file inputs */}
       <input
