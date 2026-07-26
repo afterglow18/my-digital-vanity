@@ -181,24 +181,25 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
     const origDataUrl = await blobToDataUrl(png);
 
-    if (!isPhotoCleanupAvailable()) {
-      // Web / dev — skip Vision, save directly
-      return saveDataUrl(origDataUrl, countOffset);
-    }
-
-    // Native — run Vision then ALWAYS show comparison
-    let cleanedUrl  = origDataUrl;
+    // Always show comparison for single-file captures on all platforms.
+    // On native iOS: Vision runs and produces a cleaned version.
+    // On web: the cleaned panel shows a friendly "not available" message.
+    let cleanedUrl   = origDataUrl;
     let subjectFound = false;
-    let visionErr: string | null = null;
+    let visionErr: string | null = isPhotoCleanupAvailable()
+      ? null
+      : "Clean Up is only available in the iOS app.";
 
-    try {
-      const b64    = await blobToBase64(png, 1200);
-      const result = await PhotoCleanup.processPhoto({ imageData: b64 });
-      cleanedUrl   = base64ToDataUrl(result.cleanedImageData);
-      subjectFound = result.hadSubject;
-    } catch (err) {
-      console.warn("[PhotoCleanup] Plugin error:", err);
-      visionErr = "Clean Up couldn't run on this photo.";
+    if (isPhotoCleanupAvailable()) {
+      try {
+        const b64    = await blobToBase64(png, 1200);
+        const result = await PhotoCleanup.processPhoto({ imageData: b64 });
+        cleanedUrl   = base64ToDataUrl(result.cleanedImageData);
+        subjectFound = result.hadSubject;
+      } catch (err) {
+        console.warn("[PhotoCleanup] Plugin error:", err);
+        visionErr = "Clean Up couldn't run on this photo.";
+      }
     }
 
     setOriginalDataUrl(origDataUrl);
@@ -241,7 +242,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const handleFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setErrorMsg(null);
-    setPhase(isPhotoCleanupAvailable() ? "cleaning" : "uploading");
+    setPhase(files.length === 1 ? "cleaning" : "uploading");
     setProgress({ done: 0, total: files.length });
 
     if (files.length === 1) {
