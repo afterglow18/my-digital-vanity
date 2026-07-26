@@ -193,12 +193,13 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
   const handleCleanUpPhoto = async () => {
     if (!item.imageObjectPath) return;
+    const originalDataUrl = item.imageObjectPath;
+    // Open the compare sheet immediately — the right card shows a spinner while removal runs.
+    setCompareData({ originalDataUrl, cleanedDataUrl: "", hadSubject: true });
     setCleanupProcessing(true);
     setCleanupError(null);
     setRemovalProgress({ stage: "loading", pct: 0 });
     try {
-      const originalDataUrl = item.imageObjectPath;
-      // JS/WASM background removal — works on all platforms, no native plugin needed.
       const cleanedDataUrl = await removeBackground(
         originalDataUrl,
         (p) => setRemovalProgress(p),
@@ -334,8 +335,11 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
               originalDataUrl={compareData.originalDataUrl}
               cleanedDataUrl={compareData.cleanedDataUrl}
               hadSubject={compareData.hadSubject}
+              bgProcessing={cleanupProcessing}
+              removalProgress={removalProgress}
+              cleanupError={cleanupError}
               onSelect={handleCompareSelect}
-              onCancel={() => setCompareData(null)}
+              onCancel={() => { setCompareData(null); setCleanupError(null); }}
             />
           </motion.div>
         )}
