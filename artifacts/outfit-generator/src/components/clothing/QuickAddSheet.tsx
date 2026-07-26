@@ -389,7 +389,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   /**
    * Direct-save handler for multi-file uploads and retries.
-   * Encodes and saves immediately — no comparison step.
+   * Encodes, auto-applies background removal, and saves. No comparison step —
+   * showing a compare screen for every photo in a batch would require per-photo
+   * interaction which is disruptive. Falls back to the original if removal fails.
    */
   const handleFileDirect = useCallback(async (file: File, countOffset: number): Promise<true | false | "quota"> => {
     let png: Blob;
@@ -398,8 +400,19 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     } catch {
       return false;
     }
+    let dataUrl: string;
     try {
-      const dataUrl = await blobToDataUrl(png);
+      dataUrl = await blobToDataUrl(png);
+    } catch {
+      return false;
+    }
+    // Auto-apply background removal; silently fall back to original if it fails.
+    try {
+      dataUrl = await removeBackground(dataUrl);
+    } catch {
+      // BG removal failed — keep the encoded original
+    }
+    try {
       return saveDataUrl(dataUrl, countOffset);
     } catch {
       return false;
@@ -779,10 +792,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 <Loader2 className="w-12 h-12 animate-spin" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="font-display font-bold text-2xl uppercase tracking-tight">Saving…</p>
+                <p className="font-display font-bold text-2xl uppercase tracking-tight">
+                  {progress && progress.total > 1 ? "Cleaning up…" : "Saving…"}
+                </p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {progress && progress.total > 1
-                    ? `${progress.done} of ${progress.total} photos added.`
+                    ? `Photo ${progress.done + 1} of ${progress.total} — removing background`
                     : "Adding to your vanity."}
                 </p>
               </div>
