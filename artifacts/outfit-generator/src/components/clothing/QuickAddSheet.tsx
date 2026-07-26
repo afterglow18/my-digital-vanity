@@ -22,6 +22,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { encodeToPng } from "@/lib/processImage";
 import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
+import { buildRetryStripState } from "@/lib/retryStripHelpers";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -330,34 +331,22 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       }
     }
     setProgress(null);
-    if (succeeded.length === 0) {
-      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
-      setFailedThumbnails(thumbs);
-      setFailedFiles(errored);
-      setErrorMsg(
-        anyQuotaError
-          ? "Your device storage is full — free up space and try again."
-          : `0 of ${errored.length} photo${errored.length !== 1 ? "s" : ""} saved. Please try again.`,
-      );
-      setPhase("pick");
-    } else if (errored.length > 0) {
-      // Partial failure — keep sheet open so the user can retry just the failures
-      const retried = files.length; // count based on this attempt, not the original batch
-      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
-      setFailedThumbnails(thumbs);
-      setErrorMsg(
-        anyQuotaError
-          ? `${succeeded.length} of ${retried} photo${retried !== 1 ? "s" : ""} saved. ` +
-            `Device storage is full — free up space to add the rest.`
-          : `${succeeded.length} of ${retried} photo${retried !== 1 ? "s" : ""} saved. ` +
-            `${errored.length} couldn't be added.`,
-      );
-      setFailedFiles(errored);
-      setPhase("pick");
-    } else {
+    const stripState = buildRetryStripState({
+      succeededCount: succeeded.length,
+      failedCount: errored.length,
+      totalAttempted: files.length,
+      anyQuotaError,
+    });
+    if (stripState.clearFailed) {
       setFailedFiles([]);
       setFailedThumbnails([]);
       handleClose();
+    } else {
+      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
+      setFailedThumbnails(thumbs);
+      setFailedFiles(errored);
+      setErrorMsg(stripState.errorMsg);
+      setPhase("pick");
     }
   }, [handleFile, handleClose]);
 
