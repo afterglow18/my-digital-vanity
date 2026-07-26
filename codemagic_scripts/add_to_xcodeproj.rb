@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
-# Adds PhotoCleanupPlugin.swift to the Xcode project's App target
-# so the compiler picks it up without manual Xcode edits.
+# Adds PhotoCleanupPlugin.swift and MyViewController.swift to the Xcode
+# project's App target so the compiler picks them up without manual edits.
 require 'xcodeproj'
 
 def find_group_with_file(group, filename)
@@ -22,15 +22,16 @@ raise "Could not find App source group" unless app_group
 
 puts "Using group: #{app_group.path}"
 
-fname    = 'PhotoCleanupPlugin.swift'
-in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
-if in_build
-  puts "  #{fname} already in build phase"
-else
-  existing = app_group.files.find { |f| f.path == fname }
-  ref = existing || app_group.new_reference(fname)
-  target.source_build_phase.add_file_reference(ref)
-  puts "  #{fname} added ✓"
+['PhotoCleanupPlugin.swift', 'MyViewController.swift'].each do |fname|
+  in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
+  if in_build
+    puts "  #{fname} already in build phase"
+  else
+    existing = app_group.files.find { |f| f.path == fname }
+    ref = existing || app_group.new_reference(fname)
+    target.source_build_phase.add_file_reference(ref)
+    puts "  #{fname} added ✓"
+  end
 end
 
 project.save

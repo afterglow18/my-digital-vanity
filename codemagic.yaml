@@ -62,17 +62,22 @@ workflows:
           NATIVE_SRC="artifacts/outfit-generator/native"
           IOS_APP="artifacts/outfit-generator/ios/App/App"
 
-          # ── Step 1: copy the Swift implementation ────────────────────────────
+          # ── Step 1: copy Swift source files ──────────────────────────────────
           cp "$NATIVE_SRC/PhotoCleanupPlugin.swift" "$IOS_APP/"
           echo "Copied PhotoCleanupPlugin.swift"
+          cp "$NATIVE_SRC/MyViewController.swift" "$IOS_APP/"
+          echo "Copied MyViewController.swift"
 
-          # ── Step 2: register plugin via AppDelegate.swift ────────────────────
-          # CAPBridge.register() is the public Swift API for plugin registration.
-          # This is more reliable than the ObjC CAP_PLUGIN macro, which requires
-          # a separate .m file and ObjC +load — not available in pure-Swift targets.
+          # ── Step 2: patch Main.storyboard to use MyViewController ─────────────
+          # Plugin registration happens in MyViewController.capacitorDidLoad()
+          # via bridge?.registerPluginInstance(). The storyboard must point at
+          # MyViewController (not CAPBridgeViewController) for that to fire.
+          python3 codemagic_scripts/patch_storyboard.py
+
+          # ── Step 3: strip any stale registration lines from AppDelegate.swift ─
           python3 codemagic_scripts/inject_appdelegate.py
 
-          # ── Step 3: add PhotoCleanupPlugin.swift to the Xcode project ────────
+          # ── Step 4: add both Swift files to the Xcode project ────────────────
           ruby codemagic_scripts/add_to_xcodeproj.rb
 
       - name: Add export compliance and privacy keys to Info.plist
