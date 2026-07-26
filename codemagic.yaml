@@ -70,91 +70,10 @@ workflows:
           # CAPBridge.register() is the public Swift API for plugin registration.
           # This is more reliable than the ObjC CAP_PLUGIN macro, which requires
           # a separate .m file and ObjC +load — not available in pure-Swift targets.
-          python3 - << 'PYEOF'
-import re, sys
-
-path = 'artifacts/outfit-generator/ios/App/App/AppDelegate.swift'
-try:
-    content = open(path).read()
-except FileNotFoundError:
-    print(f'ERROR: {path} not found', file=sys.stderr)
-    sys.exit(1)
-
-print('--- AppDelegate.swift (first 800 chars) ---')
-print(content[:800])
-print('---')
-
-registration = '        CAPBridge.register(pluginClass: PhotoCleanupPlugin.self, withName: "PhotoCleanup")\n'
-
-# Match the body of didFinishLaunchingWithOptions up to its "return true"
-patched, n = re.subn(
-    r'(func application\(_ application: UIApplication, didFinishLaunchingWithOptions'
-    r'[^{]*\{[^}]*)return true',
-    r'\g<1>' + registration + '        return true',
-    content,
-    count=1
-)
-
-if n == 0:
-    print('WARNING: primary pattern did not match — trying simpler pattern')
-    patched, n = re.subn(
-        r'(// Override point for customization after application launch\.\n\s+)return true',
-        r'\g<1>' + registration.lstrip() + '        return true',
-        content,
-        count=1
-    )
-
-if n == 0:
-    print('ERROR: Could not find insertion point in AppDelegate.swift', file=sys.stderr)
-    print('Full file:', file=sys.stderr)
-    print(content, file=sys.stderr)
-    sys.exit(1)
-
-open(path, 'w').write(patched)
-print('AppDelegate.swift patched — registration line added:')
-for i, line in enumerate(patched.split('\n'), 1):
-    if 'PhotoCleanup' in line or 'didFinishLaunch' in line:
-        print(f'  L{i}: {line}')
-print('Done ✓')
-PYEOF
+          python3 codemagic_scripts/inject_appdelegate.py
 
           # ── Step 3: add PhotoCleanupPlugin.swift to the Xcode project ────────
-          ruby - << 'RUBY'
-          require 'xcodeproj'
-
-          def find_group_with_file(group, filename)
-            return group if group.files.any? { |f| f.path == filename }
-            group.groups.each do |g|
-              result = find_group_with_file(g, filename)
-              return result if result
-            end
-            nil
-          end
-
-          project = Xcodeproj::Project.open('artifacts/outfit-generator/ios/App/App.xcodeproj')
-          target  = project.targets.find { |t| t.name == 'App' }
-          raise "No 'App' target found" unless target
-
-          app_group  = find_group_with_file(project.main_group, 'AppDelegate.swift')
-          app_group ||= project.main_group.find_subpath('App', false)
-          raise "Could not find App source group" unless app_group
-
-          puts "Using group: #{app_group.path}"
-
-          fname    = 'PhotoCleanupPlugin.swift'
-          in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
-          if in_build
-            puts "  #{fname} already in build phase"
-          else
-            existing = app_group.files.find { |f| f.path == fname }
-            ref = existing || app_group.new_reference(fname)
-            target.source_build_phase.add_file_reference(ref)
-            puts "  #{fname} added ✓"
-          end
-
-          project.save
-          puts 'xcodeproj saved ✓'
-          RUBY
+          ruby codemagic_scripts/add_to_xcodeproj.rb
 
       - name: Add export compliance and privacy keys to Info.plist
         script: |
