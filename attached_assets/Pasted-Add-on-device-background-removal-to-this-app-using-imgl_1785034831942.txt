@@ -1,0 +1,110 @@
+Add on-device background removal to this app using @imgly/background-removal. This is a pure JavaScript/WebAssembly library — no native plugins, no CocoaPods, no iOS-version gating. It runs inside WKWebView (Capacitor iOS), regular browsers, and Android. The ONNX model downloads once from the imgly CDN on first use (~15 MB), then is cached permanently by the browser/WKWebView.
+
+Step 1 — Install the package
+
+@imgly/background-removal@^1.7.0
+Add it to the app's package.json dependencies, then run pnpm install (or npm install).
+
+Step 2 — Vite config change (required, or the build will break)
+
+In every vite.config.ts / vite.config.js in the project (including any separate Capacitor build config like vite.capacitor.config.ts), add this inside defineConfig:
+
+optimizeDeps: {
+  exclude: ['@imgly/background-removal'],
+},
+Without this, Vite tries to pre-bundle the library during vite optimize and crashes because the library ships its own ESM with dynamic WASM imports that Vite can't handle statically.
+
+Step 3 — Create src/lib/backgroundRemoval.ts
+
+Create this file exactly as written. It wraps the imgly library with a clean API and handles the data-URL ↔ Blob conversions that the rest of the app needs:
+
+import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
+export type RemovalProgress =
+  | { stage: "loading"; pct: number }
+  | { stage: "inferring" }
+  | { stage: "done" };
+/** Always true — JS/WASM works on every platform. */
+export async function isBackgroundRemovalSupported(): Promise<boolean> {
+  return true;
+}
+/**
+ * Remove the background from a JPEG/PNG data-URL.
+ * Returns a PNG data-URL with a transparent background.
+ * Throws only on network error (first model download) or unreadable image.
+ */
+export async function removeBackground(
+  dataUrl: string,
+  onProgress?: (p: RemovalProgress) => void,
+): Promise<string> {
+  onProgress?.({ stage: "loading", pct: 0 });
+  const sourceBlob = await dataUrlToBlob(dataUrl);
+  onProgress?.({ stage: "inferring" });
+  const resultBlob = await imglyRemoveBackground(sourceBlob, {
+    // isnet_fp16 = half-precision model, good balance of quality and speed.
+    // Valid values: "isnet" | "isnet_fp16" | "isnet_quint8"
+    // Do NOT use "small" or "medium" — those are not valid in v1.7.
+    model: "isnet_fp16",
+    output: {
+      format: "image/png",
+      quality: 0.9,
+    },
+    // publicPath is intentionally omitted — the library defaults to the
+    // staticimgly CDN (https://staticimgly.com/@imgly/background-removal-data/1.7.0/dist/)
+    // which WKWebView can reach. If you want to self-host, copy the files
+    // from node_modules/@imgly/background-removal/dist/ to your public/
+    // folder and set publicPath: import.meta.env.BASE_URL + "bgremoval/"
+  });
+  onProgress?.({ stage: "done" });
+  return blobToDataUrl(resultBlob);
+}
+/** Blob → base64 data-URL */
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+/** base64 data-URL → Blob */
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+Step 4 — Wire it into the photo upload flow
+
+In whatever component handles photo selection (camera or gallery picker), after you have the raw image as a File or Blob:
+
+import { removeBackground, blobToDataUrl, dataUrlToBlob } from "@/lib/backgroundRemoval";
+// 1. Show the original immediately (don't wait for removal)
+const originalUrl = URL.createObjectURL(imageBlob);
+setOriginalUrl(originalUrl);
+setPhase("preview");
+// 2. Kick off background removal in the background
+setProcessing(true);
+try {
+  const dataUrl = await blobToDataUrl(imageBlob);
+  const cleanedDataUrl = await removeBackground(dataUrl);
+  const cleanedBlob = await dataUrlToBlob(cleanedDataUrl);
+  setCleanedUrl(URL.createObjectURL(cleanedBlob));
+  setCleanedBlob(cleanedBlob);
+  setSelected("cleaned"); // auto-select the cleaned version
+} catch (err) {
+  console.warn("Background removal failed, keeping original:", err);
+  // Fall back silently — user still has the original
+} finally {
+  setProcessing(false);
+}
+Show a side-by-side Original | Cleaned picker while processing is true (show a spinner in the Cleaned slot). When cleanedUrl is ready, show it. If it fails, keep the Original selected with no error shown to the user.
+
+What NOT to do
+
+Do not try to implement this as a native Capacitor plugin (Swift VNGenerateForegroundInstanceMaskRequest). Swift classes inside dynamic CocoaPod frameworks use lazy ObjC registration and are never found by Capacitor's objc_getClassList auto-discovery. The CAP_PLUGIN macro approach requires an .m file and proper framework configuration that is extremely fragile across Xcode/Codemagic builds. The JS library avoids all of this entirely.
+Do not subclass CAPBridgeViewController and patch Main.storyboard — the subclass has the same lazy-registration problem and causes a black-screen crash on launch.
+Do not set model: "medium" or model: "small" — those strings are not valid in v1.7. Use "isnet", "isnet_fp16", or "isnet_quint8".
+Checklist
+
+ @imgly/background-removal@^1.7.0 in package.json
+optimizeDeps: { exclude: ['@imgly/background-removal'] } in every Vite config
+ src/lib/backgroundRemoval.ts created with the content above
+ Photo upload component calls removeBackground() after getting a photo, shows spinner while processing, falls back silently on error
