@@ -284,18 +284,19 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setErrorMsg(
         anyQuotaError
           ? "Your device storage is full — free up space and try again."
-          : "Could not save the photos. Please try again.",
+          : `0 of ${errored.length} photo${errored.length !== 1 ? "s" : ""} saved. Please try again.`,
       );
       setPhase("pick");
     } else if (errored.length > 0) {
       // Partial failure — keep sheet open so the user can retry just the failures
+      const retried = files.length; // count based on this attempt, not the original batch
       const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
       setFailedThumbnails(thumbs);
       setErrorMsg(
         anyQuotaError
-          ? `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+          ? `${succeeded.length} of ${retried} photo${retried !== 1 ? "s" : ""} saved. ` +
             `Device storage is full — free up space to add the rest.`
-          : `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+          : `${succeeded.length} of ${retried} photo${retried !== 1 ? "s" : ""} saved. ` +
             `${errored.length} couldn't be added.`,
       );
       setFailedFiles(errored);
