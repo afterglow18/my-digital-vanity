@@ -216,13 +216,21 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       const ok = await handleFile(files[i], i);
       if (ok && ok !== "comparing") saved++;
     }
+    setProgress(null);
+    const failed = files.length - saved;
     if (saved === 0) {
       setErrorMsg("Could not save the photos. Please try again.");
+      setPhase("pick");
+    } else if (failed > 0) {
+      // Partial failure — keep sheet open so the user knows what happened
+      setErrorMsg(
+        `${saved} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+        `${failed} couldn't be added — please try again.`
+      );
       setPhase("pick");
     } else {
       handleClose();
     }
-    setProgress(null);
   }, [handleFile, handleClose]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
