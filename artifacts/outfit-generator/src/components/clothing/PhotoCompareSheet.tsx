@@ -24,6 +24,8 @@ interface Props {
   cleanupError?:   string | null;
   bgProcessing?:   boolean;
   cancelLabel?:    string;
+  /** Shown above the title when processing a batch, e.g. "Photo 2 of 5" */
+  batchProgress?:  string;
   onSelect:        (dataUrl: string) => void;
   onCancel:        () => void;
 }
@@ -37,6 +39,7 @@ export function PhotoCompareSheet({
   cleanupError,
   bgProcessing = false,
   cancelLabel = "Cancel",
+  batchProgress,
   onSelect,
   onCancel,
 }: Props) {
@@ -71,8 +74,13 @@ export function PhotoCompareSheet({
         style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
       >
         <div>
+          {batchProgress && (
+            <p className="text-[10px] font-black uppercase tracking-widest text-black/35 mb-0.5">
+              {batchProgress}
+            </p>
+          )}
           <h2 className="font-display font-bold text-xl uppercase tracking-tight leading-none">
-            Clean Up Photo
+            Remove Background
           </h2>
           <p className="text-xs text-black/50 font-medium mt-0.5">
             {cleanupError

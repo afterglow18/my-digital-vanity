@@ -16,6 +16,8 @@
 import React, { useRef, useState, useCallback, useEffect } from "react";
 import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import { Capacitor } from "@capacitor/core";
+import { Camera } from "@capacitor/camera";
 import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import type { ClothingItem } from "@/types/local";
@@ -135,6 +137,13 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const bgGenRef = useRef(0);
   const [bgProcessing, setBgProcessing] = useState(false);
 
+  // Batch-upload queue: populated when the user selects multiple photos.
+  // Each entry is the next file to show in the compare screen and its name countOffset.
+  // Using a ref (not state) so handleCompareSelect/handleRetake never go stale.
+  const batchQueueRef = useRef<Array<{ file: File; offset: number }>>([]);
+  const [batchTotal, setBatchTotal] = useState(0); // 0 = single-photo mode
+  const [batchDone,  setBatchDone]  = useState(0); // photos saved so far in current batch
+
   const [showAbandonConfirm, setShowAbandonConfirm] = useState(false);
 
   const cameraInputRef  = useRef<HTMLInputElement>(null);
@@ -157,6 +166,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setCleanupError(null);
     setShowAbandonConfirm(false);
     pendingMeta.current = null;
+    batchQueueRef.current = [];
+    setBatchTotal(0);
+    setBatchDone(0);
   }, [open]);
 
   const createItem  = useCreateClothingItem();
@@ -285,6 +297,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setHadSubject(false);
     setCleanupError(null);
     pendingMeta.current = null;
+    batchQueueRef.current = [];
+    setBatchTotal(0);
+    setBatchDone(0);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -324,7 +339,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
    * Generation counter (bgGenRef) ensures that if the user picks a second photo
    * before the first removal finishes, the stale result is silently discarded.
    */
-  const handleFile = useCallback(async (file: File): Promise<void> => {
+  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<void> => {
     setErrorMsg(null);
     const myGen = ++bgGenRef.current;
     setOriginalDataUrl("");
@@ -355,7 +370,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     // the encoding spinner overlay is still covering it. Without this, React
     // batches setOriginalDataUrl + setPhase("preview") into one render, the
     // spinner disappears, and WebKit decodes the bitmap with nothing showing.
-    pendingMeta.current = { countOffset: 0 };
+    pendingMeta.current = { countOffset };
     flushSync(() => setOriginalDataUrl(origDataUrl));
     if (bgGenRef.current !== myGen) return;
 
@@ -388,10 +403,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   }, []);
 
   /**
-   * Direct-save handler for multi-file uploads and retries.
-   * Encodes, auto-applies background removal, and saves. No comparison step —
-   * showing a compare screen for every photo in a batch would require per-photo
-   * interaction which is disruptive. Falls back to the original if removal fails.
+   * Direct-save handler used only for the retry path (re-saving photos that
+   * previously failed to write to storage). Encodes and saves the original —
+   * no compare screen, no background removal. The user already chose their
+   * preferred version when the photo was first added.
    */
   const handleFileDirect = useCallback(async (file: File, countOffset: number): Promise<true | false | "quota"> => {
     let png: Blob;
@@ -400,19 +415,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     } catch {
       return false;
     }
-    let dataUrl: string;
     try {
-      dataUrl = await blobToDataUrl(png);
-    } catch {
-      return false;
-    }
-    // Auto-apply background removal; silently fall back to original if it fails.
-    try {
-      dataUrl = await removeBackground(dataUrl);
-    } catch {
-      // BG removal failed — keep the encoded original
-    }
-    try {
+      const dataUrl = await blobToDataUrl(png);
       return saveDataUrl(dataUrl, countOffset);
     } catch {
       return false;
@@ -428,9 +432,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setProgress({ done: 0, total: 1 });
     const result = await saveDataUrl(chosenDataUrl, meta.countOffset);
     setProgress({ done: 1, total: 1 });
-    if (result === true) {
-      handleClose();
-    } else {
+    if (result !== true) {
       setPhase("preview");
       setProgress(null);
       setErrorMsg(
@@ -438,8 +440,19 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
           ? "Your device storage is full — free up space and try again."
           : "Could not save the photo. Please try again.",
       );
+      return;
     }
-  }, [saveDataUrl, handleClose]);
+    // Advance to the next photo in the batch, or close if done.
+    const next = batchQueueRef.current.shift();
+    if (next) {
+      setBatchDone(d => d + 1);
+      await handleFile(next.file, next.offset);
+    } else {
+      setBatchTotal(0);
+      setBatchDone(0);
+      handleClose();
+    }
+  }, [saveDataUrl, handleClose, handleFile]);
 
   const handleRetake = useCallback(() => {
     bgGenRef.current += 1;  // cancel in-flight removal
@@ -449,23 +462,42 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setHadSubject(false);
     setCleanupError(null);
     pendingMeta.current = null;
-    setPhase("pick");
-  }, []);
+    // In batch mode: "Skip" — discard this photo and show the next one.
+    // In single mode: "Retake" — go back to the pick screen.
+    const next = batchQueueRef.current.shift();
+    if (next) {
+      setBatchDone(d => d + 1);
+      handleFile(next.file, next.offset);
+    } else {
+      setBatchTotal(0);
+      setBatchDone(0);
+      setPhase("pick");
+    }
+  }, [handleFile]);
 
   const handleFiles = useCallback(async (
     files: File[],
     existingThumbnailMap?: Map<File, string>,
+    isRetry = false,
   ) => {
     if (files.length === 0) return;
     setErrorMsg(null);
 
-    // Single file — show preview immediately, removal runs in background.
-    if (files.length === 1) {
-      await handleFile(files[0]);
+    if (!isRetry) {
+      // New selection — every photo flows through the compare screen one at a time.
+      // Queue photos after the first; handleCompareSelect/handleRetake advance through them.
+      batchQueueRef.current = files.slice(1).map((file, i) => ({ file, offset: i + 1 }));
+      setBatchTotal(files.length > 1 ? files.length : 0);
+      setBatchDone(0);
+      await handleFile(files[0], 0);
       return;
     }
 
-    // Multiple files — encode and save directly, no comparison step.
+    // Retry path — save originals directly, no compare screen.
+    // The user already chose their preferred version when the photo was first added.
+    batchQueueRef.current = [];
+    setBatchTotal(0);
+    setBatchDone(0);
     setPhase("uploading");
     setProgress({ done: 0, total: files.length });
     const succeeded: File[] = [];
@@ -493,9 +525,6 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setFailedThumbnails([]);
       handleClose();
     } else {
-      // Reuse pre-existing thumbnails where available (preserves any
-      // custom order the user set before hitting Retry), only regenerate
-      // for files that don't have a cached thumbnail yet.
       const thumbs = await resolveThumbnails(errored, existingThumbnailMap, fileToThumbnail);
       setFailedThumbnails(thumbs);
       setFailedFiles(errored);
@@ -503,6 +532,32 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setPhase("pick");
     }
   }, [handleFile, handleFileDirect, handleClose]);
+
+  /**
+   * On native iOS — calls Camera.pickImages() (PHPickerViewController).
+   * No permission prompt on modern iOS; supports unlimited multi-select.
+   * On web — falls back to the hidden <input multiple> file input.
+   */
+  const handleGalleryPress = useCallback(async () => {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { photos } = await Camera.pickImages({ quality: 90, limit: 0 });
+        if (!photos.length) return;
+        const files = await Promise.all(
+          photos.map(async (photo, i) => {
+            const res  = await fetch(photo.webPath!);
+            const blob = await res.blob();
+            return new File([blob], `gallery_${i}.jpg`, { type: blob.type || "image/jpeg" });
+          }),
+        );
+        if (files.length) handleFiles(files);
+      } catch {
+        // User cancelled the picker — no action needed.
+      }
+    } else {
+      galleryInputRef.current?.click();
+    }
+  }, [handleFiles]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -658,7 +713,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                         setErrorMsg(null);
                         setFailedThumbnails([]);
                         setFailedFiles([]);
-                        handleFiles(filesToRetry, thumbMap);
+                        handleFiles(filesToRetry, thumbMap, true);
                       }}
                       className="w-full py-2.5 border-2 border-black rounded-xl bg-primary font-display font-bold text-sm uppercase tracking-tight
                                  shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
@@ -686,7 +741,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 </button>
 
                 <button
-                  onClick={() => galleryInputRef.current?.click()}
+                  onClick={handleGalleryPress}
                   className="flex-1 flex flex-col items-center justify-center gap-3 py-8
                              border-4 border-black rounded-2xl bg-white
                              shadow-[5px_5px_0px_0px_rgba(0,0,0,1)]
@@ -751,7 +806,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   hadSubject={hadSubject}
                   cleanupError={cleanupError}
                   bgProcessing={bgProcessing}
-                  cancelLabel="Retake"
+                  cancelLabel={batchTotal > 0 ? "Skip" : "Retake"}
+                  batchProgress={batchTotal > 0 ? `Photo ${batchDone + 1} of ${batchTotal}` : undefined}
                   onSelect={handleCompareSelect}
                   onCancel={handleRetake}
                 />
@@ -792,13 +848,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 <Loader2 className="w-12 h-12 animate-spin" strokeWidth={1.5} />
               </div>
               <div className="text-center">
-                <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                  {progress && progress.total > 1 ? "Cleaning up…" : "Saving…"}
-                </p>
+                <p className="font-display font-bold text-2xl uppercase tracking-tight">Saving…</p>
                 <p className="text-sm text-muted-foreground mt-1">
                   {progress && progress.total > 1
-                    ? `Photo ${progress.done + 1} of ${progress.total} — removing background`
-                    : "Adding to your vanity."}
+                    ? `Saving ${progress.done + 1} of ${progress.total}…`
+                    : "Adding to your wardrobe."}
                 </p>
               </div>
             </div>
