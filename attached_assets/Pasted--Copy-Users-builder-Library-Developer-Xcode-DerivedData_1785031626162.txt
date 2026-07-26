@@ -1,0 +1,51 @@
+
+Copy /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Cordova.framework /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Cordova/Cordova.xcframework/ios-arm64/Cordova.framework (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -bitcode-strip all -bitcode-strip-tool /Applications/Xcode-26.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip -resolve-src-symlinks -remove-static-executable /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Cordova/Cordova.xcframework/ios-arm64/Cordova.framework /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks
+/Applications/Xcode-26.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Cordova/Cordova.xcframework/ios-arm64/Cordova.framework/Cordova -r -o /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Cordova.framework/Cordova
+
+Copy /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Capacitor.framework /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Capacitor/Capacitor.xcframework/ios-arm64/Capacitor.framework (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    builtin-copy -exclude .DS_Store -exclude CVS -exclude .svn -exclude .git -exclude .hg -exclude Headers -exclude PrivateHeaders -exclude Modules -exclude \*.tbd -bitcode-strip all -bitcode-strip-tool /Applications/Xcode-26.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip -resolve-src-symlinks -remove-static-executable /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Capacitor/Capacitor.xcframework/ios-arm64/Capacitor.framework /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks
+/Applications/Xcode-26.4.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/bitcode_strip /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/SourcePackages/artifacts/capacitor-swift-pm/Capacitor/Capacitor.xcframework/ios-arm64/Capacitor.framework/Capacitor -r -o /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Capacitor.framework/Capacitor
+
+CompileStoryboard /Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/Main.storyboard (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    /Applications/Xcode-26.4.app/Contents/Developer/usr/bin/ibtool --errors --warnings --notices --module App --output-partial-info-plist /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/IntermediateBuildFilesPath/App.build/Release-iphoneos/App.build/Base.lproj/Main-SBPartialInfo.plist --auto-activate-custom-fonts --target-device iphone --target-device ipad --minimum-deployment-target 15.0 --output-format human-readable-text /Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/Main.storyboard --compilation-directory /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/IntermediateBuildFilesPath/App.build/Release-iphoneos/App.build/Base.lproj
+/* com.apple.ibtool.errors */
+/Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/Main.storyboard: error: Line 14: Attribute customModule redefined
+
+
+CompileStoryboard /Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/LaunchScreen.storyboard (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    /Applications/Xcode-26.4.app/Contents/Developer/usr/bin/ibtool --errors --warnings --notices --module App --output-partial-info-plist /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/IntermediateBuildFilesPath/App.build/Release-iphoneos/App.build/Base.lproj/LaunchScreen-SBPartialInfo.plist --auto-activate-custom-fonts --target-device iphone --target-device ipad --minimum-deployment-target 15.0 --output-format human-readable-text /Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/LaunchScreen.storyboard --compilation-directory /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/IntermediateBuildFilesPath/App.build/Release-iphoneos/App.build/Base.lproj
+
+CodeSign /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Cordova.framework (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    
+    Signing Identity:     "Apple Distribution: After Glow Tanning LLC (2A78MFVCJS)"
+    Provisioning Profile: "My Digital Vanity AppStore"
+                          (b9195c5d-919e-4883-bb01-9e19e4c2efa4)
+    
+    /usr/bin/codesign --force --sign 6124BBCFD95F7DE11D6F371E6D02B12253CBA5DF --preserve-metadata\=identifier,entitlements,flags --generate-entitlement-der /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Cordova.framework
+
+CodeSign /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Capacitor.framework (in target 'App' from project 'App')
+    cd /Users/builder/clone/artifacts/outfit-generator/ios/App
+    
+    Signing Identity:     "Apple Distribution: After Glow Tanning LLC (2A78MFVCJS)"
+    Provisioning Profile: "My Digital Vanity AppStore"
+                          (b9195c5d-919e-4883-bb01-9e19e4c2efa4)
+    
+    /usr/bin/codesign --force --sign 6124BBCFD95F7DE11D6F371E6D02B12253CBA5DF --preserve-metadata\=identifier,entitlements,flags --generate-entitlement-der /Users/builder/Library/Developer/Xcode/DerivedData/App-erohrrnfdmvxgwdpxmgpqwyliavv/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/Frameworks/Capacitor.framework
+
+** ARCHIVE FAILED **
+
+
+The following build commands failed:
+	CompileStoryboard /Users/builder/clone/artifacts/outfit-generator/ios/App/App/Base.lproj/Main.storyboard (in target 'App' from project 'App')
+	Archiving workspace App with scheme App
+(2 failures)
+
+
+Build failed :|
+Step 13 script `Xcode archive` exited with status code 65
