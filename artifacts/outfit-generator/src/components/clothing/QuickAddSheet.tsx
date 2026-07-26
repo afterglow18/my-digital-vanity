@@ -314,6 +314,24 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 </button>
               </div>
 
+              {/* Clean Up badge — only on native */}
+              {isPhotoCleanupAvailable() && (
+                <div
+                  className="flex items-start gap-2 px-3 py-2.5 rounded-xl border-2"
+                  style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
+                >
+                  <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#D0909A" }} />
+                  <div>
+                    <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
+                      <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device.
+                    </p>
+                    <p className="text-xs leading-snug mt-0.5" style={{ color: "#B07080" }}>
+                      A before/after comparison appears when adding a single photo.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <div className="border-2 border-black rounded-2xl bg-white p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
                 <p className="font-display font-bold text-sm uppercase tracking-tight mb-3 flex items-center gap-2">
                   <span>📸</span> PHOTO TIPS
