@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2 } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
@@ -151,6 +151,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const patch = (key: keyof FormState) => (value: string | boolean) =>
     setForm((prev) => prev ? { ...prev, [key]: value } : prev);
 
+  // Cleaned images are stored as PNG; originals are JPEG. Disable the button once cleaned.
+  const alreadyCleaned = (localImageUrl ?? item.imageObjectPath ?? "").startsWith("data:image/png");
+
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
     queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
@@ -293,12 +296,12 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
             <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
               <button
                 onClick={handleCleanUpPhoto}
-                disabled={cleanupProcessing}
+                disabled={cleanupProcessing || alreadyCleaned}
                 className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
                            font-bold uppercase border-2 border-black bg-white
                            shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
                            active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
-                           transition-all disabled:opacity-50"
+                           transition-all disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {cleanupProcessing ? (
                   <>
@@ -306,6 +309,11 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
                     {removalProgress?.stage === "loading"
                       ? `Downloading… ${removalProgress.pct}%`
                       : "Removing background…"}
+                  </>
+                ) : alreadyCleaned ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Background Removed
                   </>
                 ) : (
                   <>
