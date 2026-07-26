@@ -1,0 +1,230 @@
+Add background removal to the photo upload flow with a side-by-side Original | Cleaned ✨ comparison. The user sees both options and taps to choose before saving. Uses @imgly/background-removal — pure JS/WebAssembly, works in WKWebView (Capacitor iOS) and regular browsers, no native plugins required.
+
+Package & Vite setup
+
+Add to package.json:
+
+"@imgly/background-removal": "^1.7.0"
+In every vite.config.ts in the project — without this Vite crashes pre-bundling the WASM imports:
+
+optimizeDeps: {
+  exclude: ['@imgly/background-removal'],
+}
+src/lib/backgroundRemoval.ts
+
+import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
+export async function removeBackground(dataUrl: string): Promise<string> {
+  const sourceBlob = await dataUrlToBlob(dataUrl);
+  const resultBlob = await imglyRemoveBackground(sourceBlob, {
+    // Valid model values in v1.7: "isnet" | "isnet_fp16" | "isnet_quint8"
+    // Do NOT use "small" or "medium" — not valid strings in this version
+    model: "isnet_fp16",
+    output: { format: "image/png", quality: 0.9 },
+    // publicPath omitted → uses staticimgly CDN automatically
+    // WKWebView can reach it; model is cached after first download (~15 MB)
+  });
+  return blobToDataUrl(resultBlob);
+}
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+Component state
+
+type Phase = "pick" | "encoding" | "preview" | "uploading";
+const [phase,        setPhase]        = useState<Phase>("pick");
+const [originalBlob, setOriginalBlob] = useState<Blob | null>(null);
+const [originalUrl,  setOriginalUrl]  = useState<string | null>(null);
+const [cleanedBlob,  setCleanedBlob]  = useState<Blob | null>(null);
+const [cleanedUrl,   setCleanedUrl]   = useState<string | null>(null);
+const [bgProcessing, setBgProcessing] = useState(false);
+const [bgFailed,     setBgFailed]     = useState(false);
+const [selected,     setSelected]     = useState<"original" | "cleaned">("original");
+// Generation counter — each photo bumps this; stale async results check it
+// before writing state so a slow first photo never clobbers a fast second one
+const bgGenRef = useRef(0);
+Reset (call on close/cancel)
+
+const handleClose = () => {
+  bgGenRef.current += 1;   // cancels any in-flight removal
+  setBgProcessing(false);  // MUST reset — close can happen mid-removal
+  setPhase("pick");
+  setOriginalBlob(null);
+  setOriginalUrl(null);
+  setCleanedBlob(null);
+  setCleanedUrl(null);
+  setBgFailed(false);
+  setSelected("original");
+  // ... your other close logic
+};
+handleFile — call after the user picks or takes a photo
+
+const handleFile = useCallback(async (file: File | Blob) => {
+  // 1. Switch to "encoding" phase IMMEDIATELY — before any async work.
+  //    This shows a full-screen "Processing…" spinner right away so the
+  //    user never sees a blank screen during the 1-3 s canvas encode step.
+  const myGen = ++bgGenRef.current;
+  setOriginalBlob(null);
+  setOriginalUrl(null);
+  setCleanedBlob(null);
+  setCleanedUrl(null);
+  setBgFailed(false);
+  setBgProcessing(false);
+  setSelected("original");
+  setPhase("encoding");     // ← instant feedback before any await
+  // 2. Encode to JPEG ≤ 2048px
+  let jpeg: Blob;
+  try {
+    jpeg = await encodeForUpload(file);
+  } catch (err) {
+    if (bgGenRef.current !== myGen) return;
+    setErrorMsg(`Could not read the photo: ${err instanceof Error ? err.message : String(err)}`);
+    setPhase("pick");
+    return;
+  }
+  if (bgGenRef.current !== myGen) return;
+  // 3. Show original + switch to comparison screen
+  setOriginalBlob(jpeg);
+  setOriginalUrl(URL.createObjectURL(jpeg));
+  setPhase("preview");      // ← original is ready, comparison screen appears
+  // 4. Background removal — generation guard discards stale results
+  setBgProcessing(true);
+  try {
+    const dataUrl = await blobToDataUrl(jpeg);
+    if (bgGenRef.current !== myGen) return;
+    const resultUrl = await removeBackground(dataUrl);
+    if (bgGenRef.current !== myGen) return;
+    const resultBlob   = await dataUrlToBlob(resultUrl);
+    const resultObjUrl = URL.createObjectURL(resultBlob);
+    if (bgGenRef.current !== myGen) { URL.revokeObjectURL(resultObjUrl); return; }
+    setCleanedBlob(resultBlob);
+    setCleanedUrl(resultObjUrl);
+    setSelected("cleaned");   // auto-select the cleaned version
+  } catch (err) {
+    if (bgGenRef.current !== myGen) return;
+    console.warn("Background removal failed, keeping original:", err);
+    setBgFailed(true);
+  } finally {
+    // Only clear spinner for our generation — never cancel a newer photo's spinner
+    if (bgGenRef.current === myGen) setBgProcessing(false);
+  }
+}, []);
+encodeForUpload helper
+
+async function encodeForUpload(input: File | Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(input);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const MAX = 2048;
+      const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(b => b && b.size > 1000 ? resolve(b) : reject(new Error("blank")), "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("load failed")); };
+    img.src = url;
+  });
+}
+UI — phase rendering
+
+Use AnimatePresence with mode="wait" and initial={false} (skips the fade-in on first render so the pick screen appears instantly), plus a short explicit transition on every phase so the between-phase gap is imperceptible:
+
+<AnimatePresence mode="wait" initial={false}>
+  {/* Pick screen */}
+  {phase === "pick" && (
+    <motion.div key="pick" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+      {/* your Take Photo / Upload Photo buttons */}
+    </motion.div>
+  )}
+  {/* Encoding screen — appears INSTANTLY after photo is picked */}
+  {phase === "encoding" && (
+    <motion.div key="encoding" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
+                style={{ display: "flex", flexDirection: "column", alignItems: "center",
+                         justifyContent: "center", flex: 1, gap: 20 }}>
+      <Loader2 size={48} className="animate-spin" />
+      <p style={{ fontWeight: "bold", fontSize: 24 }}>Processing…</p>
+      <p style={{ color: "#888" }}>Getting your photo ready.</p>
+    </motion.div>
+  )}
+  {/* Comparison screen */}
+  {phase === "preview" && (
+    <motion.div key="preview" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+      <p>{bgProcessing ? "This will take a moment…" : bgFailed ? "Original" : "Tap to choose"}</p>
+      <div style={{ display: "flex", gap: 12 }}>
+        {/* Original card */}
+        <button onClick={() => setSelected("original")}>
+          <img src={originalUrl!} alt="Original" />
+          <span>Original</span>
+        </button>
+        {/* Cleaned card — checkerboard shows transparency */}
+        <button onClick={() => cleanedUrl && setSelected("cleaned")} disabled={!cleanedUrl}>
+          <div style={{ background: "repeating-conic-gradient(#d1d5db 0% 25%, white 0% 50%) 0 0 / 12px 12px",
+                        minHeight: 176, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {cleanedUrl ? (
+              <img src={cleanedUrl} alt="Cleaned" />
+            ) : bgFailed ? (
+              <p>Could not remove background</p>
+            ) : (
+              /* Shows while bgProcessing=true AND during the brief moment before it fires */
+              <div style={{ textAlign: "center" }}>
+                <Loader2 size={32} className="animate-spin" />
+                <p style={{ fontWeight: "bold" }}>Processing</p>
+              </div>
+            )}
+          </div>
+          <span>Cleaned ✨</span>
+        </button>
+      </div>
+      <button onClick={() => setPhase("pick")}>Retake</button>
+      <button onClick={handleSave} disabled={bgProcessing}>
+        {bgProcessing ? "Processing…" : "Save to Closet"}
+      </button>
+    </motion.div>
+  )}
+  {/* Uploading screen */}
+  {phase === "uploading" && (
+    <motion.div key="uploading" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+      <Loader2 className="animate-spin" />
+      <p>Saving…</p>
+    </motion.div>
+  )}
+</AnimatePresence>
+Save logic
+
+const handleSave = async () => {
+  const blob = selected === "cleaned" && cleanedBlob ? cleanedBlob : originalBlob;
+  const ext  = selected === "cleaned" && cleanedBlob ? "png" : "jpg";
+  // ... save blob with your storage logic
+};
+The gotchas that will bite you
+
+1. The generation counter is mandatory. Without it, taking a second photo while the first removal is still running causes photo #1's finally block to call setBgProcessing(false) on photo #2's state — silently killing the spinner. Photo #1's result also overwrites photo #2's cleaned output. Every await in the removal chain must check bgGenRef.current !== myGen and bail if stale.
+
+2. Reset bgProcessing in your close handler. useState persists across open/close when the component stays mounted (returning null doesn't unmount it). If the sheet closes mid-removal, bgProcessing stays true. The next open starts with the Save button disabled and the user has no idea why.
+
+3. Switch to "encoding" phase before the first await, not after. encodeForUpload (canvas resize + toBlob) takes 1-3 s on device. If you wait until it finishes to change phase, the user sits on the pick screen with no feedback for 1-3 s — looks like a crash.
+
+4. Use AnimatePresence initial={false}. Without it, the pick screen fades in from opacity: 0 over ~400 ms every time the sheet opens. Looks blank.
+
+5. Don't use AnimatePresence mode="sync". It collapses flex children with no explicit height during simultaneous transitions — causes its own blank screen. Use mode="wait" with a short transition={{ duration: 0.12 }} instead.
+
+6. Model names in v1.7: "isnet" | "isnet_fp16" | "isnet_quint8". Not "small" or "medium".
+
+7. First use downloads ~15 MB from the imgly CDN. WKWebView caches it permanently after that. Show a label like "This will take a moment…" so users don't think it's frozen.
