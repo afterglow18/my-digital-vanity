@@ -331,21 +331,24 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     const origDataUrl = await blobToDataUrl(png);
     if (bgGenRef.current !== myGen) return;
 
-    // Pre-decode the image into the browser bitmap cache while the encoding
-    // spinner is still showing. WebKit decoding a cold base64 PNG takes 1-2 s
-    // on device and leaves the compare sheet white if we switch phase first.
-    // By waiting for onload here, the <img> paints instantly when phase="preview".
+    // Set originalDataUrl NOW while still in "encoding" phase.
+    // The compare sheet is already mounted in the DOM (hidden behind the spinner
+    // overlay) so its <img> element gets the src immediately and WebKit begins
+    // decoding in parallel. By the time we remove the spinner the bitmap is ready.
+    pendingMeta.current = { countOffset: 0 };
+    setOriginalDataUrl(origDataUrl);
+
+    // Belt-and-suspenders: also pre-decode via new Image() in case WKWebView
+    // doesn't share the decoded bitmap between the in-DOM <img> and a JS Image.
     await new Promise<void>((resolve) => {
       const img = new Image();
       img.onload  = () => resolve();
-      img.onerror = () => resolve(); // never block on a decode error
+      img.onerror = () => resolve();
       img.src = origDataUrl;
     });
     if (bgGenRef.current !== myGen) return;
 
-    // Show original immediately — preview screen appears without waiting for removal.
-    pendingMeta.current = { countOffset: 0 };
-    setOriginalDataUrl(origDataUrl);
+    // Spinner goes away — compare sheet is already painted underneath.
     setPhase("preview");
 
     // Background removal runs while the user already sees the original.
@@ -706,39 +709,53 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             </div>
           )}
 
-          {/* ── ENCODING — full-screen spinner shown immediately after photo is picked ── */}
-          {phase === "encoding" && (
-            <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
-              <div
-                className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
-                style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
-              >
-                <Loader2 className="w-12 h-12 animate-spin" />
-              </div>
-              <div className="text-center">
-                <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                  Processing…
-                </p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Getting your photo ready
-                </p>
-              </div>
-            </div>
-          )}
+          {/* ── ENCODING / PREVIEW ────────────────────────────────────────────────
+               Both phases share one DOM subtree so PhotoCompareSheet is never
+               unmounted between them. The <img> inside it receives its src while
+               the spinner overlay is still covering it, giving WebKit time to
+               decode the bitmap before the spinner is removed. Removing the
+               spinner then reveals an already-painted compare sheet — no blank. */}
+          {(phase === "encoding" || phase === "preview") && (
+            <div className="flex-1 relative min-h-0 flex flex-col">
 
-          {/* ── PREVIEW — original visible immediately; cleaned slot fills in when ready ── */}
-          {phase === "preview" && (
-            <div className="flex-1 flex flex-col min-h-0">
-              <PhotoCompareSheet
-                originalDataUrl={originalDataUrl}
-                cleanedDataUrl={cleanedDataUrl}
-                hadSubject={hadSubject}
-                cleanupError={cleanupError}
-                bgProcessing={bgProcessing}
-                cancelLabel="Retake"
-                onSelect={handleCompareSelect}
-                onCancel={handleRetake}
-              />
+              {/* Compare sheet — always mounted once encoding starts */}
+              <div className="absolute inset-0 flex flex-col">
+                <PhotoCompareSheet
+                  originalDataUrl={originalDataUrl}
+                  cleanedDataUrl={cleanedDataUrl}
+                  hadSubject={hadSubject}
+                  cleanupError={cleanupError}
+                  bgProcessing={bgProcessing}
+                  cancelLabel="Retake"
+                  onSelect={handleCompareSelect}
+                  onCancel={handleRetake}
+                />
+              </div>
+
+              {/* Spinner overlay — covers the compare sheet while encoding.
+                  Removed when phase becomes "preview"; compare sheet underneath
+                  is already decoded and painted. */}
+              {phase === "encoding" && (
+                <div
+                  className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 p-6"
+                  style={{ background: "#f9f4ee" }}
+                >
+                  <div
+                    className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
+                    style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
+                  >
+                    <Loader2 className="w-12 h-12 animate-spin" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-display font-bold text-2xl uppercase tracking-tight">
+                      Processing…
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Getting your photo ready
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
