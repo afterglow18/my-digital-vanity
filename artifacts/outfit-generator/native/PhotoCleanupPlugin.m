@@ -1,10 +1,15 @@
 /**
  * PhotoCleanupPlugin.m
  *
- * Registers PhotoCleanupPlugin with the Capacitor bridge via the CAP_PLUGIN
- * macro.  This file is auto-discovered by Capacitor — no AppDelegate changes
- * are required.
+ * Registers PhotoCleanupPlugin with the Capacitor ObjC bridge under the
+ * JavaScript name "PhotoCleanup".  This is the standard Capacitor approach
+ * for local plugins — the CAP_PLUGIN macro wires up the class-to-name
+ * mapping and declares each bridged method so the JS bridge can dispatch
+ * processPhoto() calls to the Swift implementation.
+ *
+ * The Swift implementation lives in PhotoCleanupPlugin.swift.
  */
+
 #import <Foundation/Foundation.h>
 #import <Capacitor/Capacitor.h>
 
