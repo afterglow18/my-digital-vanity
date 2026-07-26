@@ -5,14 +5,14 @@
  */
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2 } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
-import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
-import { PhotoCompareSheet } from "./PhotoCompareSheet";
+// NOTE: Background-removal imports disabled for this release — code intact in:
+//   src/lib/photoCleanup.ts, src/components/clothing/PhotoCompareSheet.tsx
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,15 +117,6 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // Photo cleanup state
-  const [cleanupProcessing, setCleanupProcessing] = useState(false);
-  const [cleanupError, setCleanupError]           = useState<string | null>(null);
-  const [compareData, setCompareData] = useState<{
-    originalDataUrl: string;
-    cleanedDataUrl: string;
-    hadSubject: boolean;
-  } | null>(null);
-
   const updateItem  = useUpdateClothingItem();
   const deleteItem  = useDeleteClothingItem();
   const queryClient = useQueryClient();
@@ -133,9 +124,6 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   useEffect(() => {
     if (item) setForm(toForm(item));
     setShowDeleteConfirm(false);
-    setCleanupError(null);
-    setCleanupProcessing(false);
-    setCompareData(null);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!item || !form) return null;
