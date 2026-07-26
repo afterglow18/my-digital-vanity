@@ -434,13 +434,15 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   }, [saveDataUrl]);
 
   const handleCompareSelect = useCallback(async (chosenDataUrl: string) => {
-    const meta = pendingMeta.current;
-    if (!meta) return;
+    // Use meta for the countOffset; fall back to 0 so saving always proceeds even if
+    // the ref was unexpectedly null (e.g. user saved original while removal was running).
+    const countOffset = pendingMeta.current?.countOffset ?? 0;
+    pendingMeta.current = null;
     bgGenRef.current += 1;  // cancel any still-running removal
     setBgProcessing(false);
     setPhase("uploading");
     setProgress({ done: 0, total: 1 });
-    const result = await saveDataUrl(chosenDataUrl, meta.countOffset);
+    const result = await saveDataUrl(chosenDataUrl, countOffset);
     setProgress({ done: 1, total: 1 });
     if (result !== true) {
       setPhase("preview");
