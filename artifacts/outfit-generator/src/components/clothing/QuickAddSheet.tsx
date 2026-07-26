@@ -481,20 +481,15 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
         </div>
       )}
 
-      {/* Body */}
+      {/* Body — plain conditionals, no AnimatePresence. Any AnimatePresence wrapper
+           around phase conditionals creates an exit-animation window where no child
+           is mounted, producing a blank screen between every phase change regardless
+           of mode, initial, or transition duration. The outer motion.div slide-in is fine. */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        <AnimatePresence mode="wait" initial={false}>
 
           {/* ── PICK ── */}
           {phase === "pick" && (
-            <motion.div
-              key="pick"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12 }}
-              className="flex flex-col p-5 gap-5 overflow-y-auto"
-            >
+            <div className="flex flex-col p-5 gap-5 overflow-y-auto">
               {errorMsg && (
                 <div className="flex flex-col gap-2">
                   <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
@@ -679,19 +674,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   ))}
                 </ul>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {/* ── ENCODING — full-screen spinner shown immediately after photo is picked ── */}
           {phase === "encoding" && (
-            <motion.div
-              key="encoding"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12 }}
-              className="flex-1 flex flex-col items-center justify-center gap-5 p-6"
-            >
+            <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
               <div
                 className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
                 style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
@@ -706,19 +694,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   Getting your photo ready
                 </p>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {/* ── PREVIEW — original visible immediately; cleaned slot fills in when ready ── */}
           {phase === "preview" && (
-            <motion.div
-              key="preview"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12 }}
-              className="flex-1 flex flex-col min-h-0"
-            >
+            <div className="flex-1 flex flex-col min-h-0">
               <PhotoCompareSheet
                 originalDataUrl={originalDataUrl}
                 cleanedDataUrl={cleanedDataUrl}
@@ -729,19 +710,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 onSelect={handleCompareSelect}
                 onCancel={handleRetake}
               />
-            </motion.div>
+            </div>
           )}
 
           {/* ── UPLOADING ── */}
           {phase === "uploading" && (
-            <motion.div
-              key="uploading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12 }}
-              className="flex-1 flex flex-col items-center justify-center gap-5 p-6"
-            >
+            <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
               <div className="w-28 h-28 border-4 border-black rounded-3xl bg-white
                               flex items-center justify-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
                 <Loader2 className="w-12 h-12 animate-spin" strokeWidth={1.5} />
@@ -754,10 +728,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                     : "Adding to your vanity."}
                 </p>
               </div>
-            </motion.div>
+            </div>
           )}
 
-        </AnimatePresence>
       </div>
 
       {/* Abandon-confirmation overlay */}
