@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-Patches Main.storyboard to use MyViewController as the custom class
-for the Capacitor bridge view controller scene, instead of the default
-CAPBridgeViewController. This is required so capacitorDidLoad() fires
-and our local plugin instances get registered via bridge?.registerPluginInstance().
+Patches Main.storyboard to use MyViewController (module App) instead of
+CAPBridgeViewController (module Capacitor).
 
-Strategy: two independent attribute substitutions so we never introduce
-duplicate attributes (the earlier fallback path appended customModule="App"
-without removing the existing customModule="Capacitor", causing
-"Attribute customModule redefined" from ibtool).
+Uses a single regex substitution that matches the entire custom-class/module
+attribute group and rewrites it atomically — so there is never a moment
+where both old and new attributes coexist and ibtool can never see a
+duplicate customModule.
 """
-import sys, os
+import re, sys, os
 
 storyboard = 'artifacts/outfit-generator/ios/App/App/Base.lproj/Main.storyboard'
 if not os.path.exists(storyboard):
@@ -18,8 +16,8 @@ if not os.path.exists(storyboard):
     sys.exit(1)
 
 content = open(storyboard).read()
-print('--- Main.storyboard (first 800 chars) ---')
-print(content[:800])
+print('--- Main.storyboard (first 1000 chars) ---')
+print(content[:1000])
 print('---')
 
 if 'MyViewController' in content:
@@ -31,24 +29,30 @@ if 'CAPBridgeViewController' not in content:
     print(content, file=sys.stderr)
     sys.exit(1)
 
-# Replace just the class name — keeps the rest of the line intact
-patched = content.replace(
-    'customClass="CAPBridgeViewController"',
-    'customClass="MyViewController"',
+# Match the full custom-class / custom-module attribute group regardless of
+# attribute ordering or whitespace between them.  Replace atomically so no
+# attribute is ever duplicated.
+PATTERN = re.compile(
+    r'customClass="CAPBridgeViewController"'
+    r'(\s+customModule="Capacitor")?'
+    r'(\s+customModuleProvider="target")?'
 )
-# Replace the module so the storyboard points at the App target, not Capacitor
-patched = patched.replace(
-    'customModule="Capacitor"',
-    'customModule="App"',
+REPLACEMENT = (
+    'customClass="MyViewController"'
+    ' customModule="App"'
+    ' customModuleProvider="target"'
 )
 
-if patched == content:
-    print('ERROR: substitutions produced no change', file=sys.stderr)
+patched, n = PATTERN.subn(REPLACEMENT, content)
+
+if n == 0:
+    print('ERROR: regex found no match in storyboard', file=sys.stderr)
+    print(content, file=sys.stderr)
     sys.exit(1)
 
 open(storyboard, 'w').write(patched)
-print('Main.storyboard patched:')
+print(f'Main.storyboard patched ({n} substitution(s)):')
 for i, line in enumerate(patched.splitlines(), 1):
-    if 'MyViewController' in line or 'customModule' in line:
+    if 'MyViewController' in line or 'customModule' in line or 'customClass' in line:
         print(f'  L{i}: {line.strip()}')
 print('Done ✓')
