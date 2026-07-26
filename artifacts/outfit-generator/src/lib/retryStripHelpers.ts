@@ -4,6 +4,49 @@
  * Extracted so they can be unit-tested without a DOM or React context.
  */
 
+// ── Thumbnail-map helpers ─────────────────────────────────────────────────────
+
+/**
+ * Build the File → thumbnail map that the Retry button passes to handleFiles.
+ * Mirrors the `new Map(failedFiles.map(...))` expression in the Retry onClick.
+ */
+export function buildRetryThumbMap(files: File[], thumbs: string[]): Map<File, string> {
+  return new Map(files.map((f, i) => [f, thumbs[i]]));
+}
+
+/**
+ * For each file in `erroredFiles`, return its thumbnail from `existingMap`
+ * when present (preserving custom order and avoiding redundant re-generation),
+ * or call `generate(file)` to produce a fresh thumbnail.
+ *
+ * `generate` may be async (e.g. `fileToThumbnail` in production, or a
+ * synchronous stub in tests). All results are resolved in parallel via
+ * `Promise.all`.
+ *
+ * Mirrors the `errored.map((f) => existingThumbnailMap?.get(f) ?? fileToThumbnail(f))`
+ * expression inside `handleFiles`.
+ */
+export async function resolveThumbnails(
+  erroredFiles: File[],
+  existingMap: Map<File, string> | undefined,
+  generate: (f: File) => string | Promise<string>,
+): Promise<string[]> {
+  return Promise.all(
+    erroredFiles.map((f) => existingMap?.get(f) ?? generate(f)),
+  );
+}
+
+/**
+ * Apply the drag-to-reorder splice to an array, returning a new array.
+ * Mirrors the splice logic in `handleThumbRowPointerUp`.
+ */
+export function reorderStrip<T>(arr: T[], fromIdx: number, toIdx: number): T[] {
+  const next = [...arr];
+  const [moved] = next.splice(fromIdx, 1);
+  next.splice(toIdx, 0, moved);
+  return next;
+}
+
 export interface UploadBatchResult {
   succeededCount: number;
   failedCount: number;

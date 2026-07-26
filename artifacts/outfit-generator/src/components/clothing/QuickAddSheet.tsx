@@ -23,7 +23,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { encodeToPng } from "@/lib/processImage";
 import { removeBackground } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
-import { buildRetryStripState } from "@/lib/retryStripHelpers";
+import { buildRetryStripState, buildRetryThumbMap, resolveThumbnails, reorderStrip } from "@/lib/retryStripHelpers";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -264,18 +264,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     stopAutoScroll();
     const overIdx = dragOverIndexRef.current;
     if (dragIndex !== null && overIdx !== null && dragIndex !== overIdx) {
-      setFailedFiles(prev => {
-        const next = [...prev];
-        const [moved] = next.splice(dragIndex, 1);
-        next.splice(overIdx, 0, moved);
-        return next;
-      });
-      setFailedThumbnails(prev => {
-        const next = [...prev];
-        const [moved] = next.splice(dragIndex, 1);
-        next.splice(overIdx, 0, moved);
-        return next;
-      });
+      setFailedFiles(prev => reorderStrip(prev, dragIndex, overIdx));
+      setFailedThumbnails(prev => reorderStrip(prev, dragIndex, overIdx));
     }
     applyDragTarget(null, null);
     setDragIndex(null);
@@ -493,9 +483,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       // Reuse pre-existing thumbnails where available (preserves any
       // custom order the user set before hitting Retry), only regenerate
       // for files that don't have a cached thumbnail yet.
-      const thumbs = await Promise.all(
-        errored.map((f) => existingThumbnailMap?.get(f) ?? fileToThumbnail(f)),
-      );
+      const thumbs = await resolveThumbnails(errored, existingThumbnailMap, fileToThumbnail);
       setFailedThumbnails(thumbs);
       setFailedFiles(errored);
       setErrorMsg(stripState.errorMsg);
@@ -653,9 +641,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                         // Build a File → thumbnail map so handleFiles can
                         // reuse existing thumbnails for any files that fail
                         // again, preserving the user's custom ordering.
-                        const thumbMap = new Map<File, string>(
-                          failedFiles.map((f, i) => [f, failedThumbnails[i]]),
-                        );
+                        const thumbMap = buildRetryThumbMap(failedFiles, failedThumbnails);
                         setErrorMsg(null);
                         setFailedThumbnails([]);
                         setFailedFiles([]);
