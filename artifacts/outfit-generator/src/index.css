@@ -173,3 +173,9 @@
     @apply bg-card border-2 border-border shadow-md transition-all;
   }
 }
+
+/* Drag-to-reorder thumbnail strip — highlight driven by DOM class, not React state */
+.is-drag-target .thumb-border {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4) !important;
+}

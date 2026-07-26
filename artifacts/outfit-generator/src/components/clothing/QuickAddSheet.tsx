@@ -117,7 +117,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [failedFiles,        setFailedFiles]        = useState<File[]>([]);
   const [failedThumbnails,   setFailedThumbnails]   = useState<string[]>([]);
   const [dragIndex,          setDragIndex]          = useState<number | null>(null);
-  const [dragOverIndex,      setDragOverIndex]      = useState<number | null>(null);
+  // dragOverIndex is tracked in a ref + DOM class so pointer-move doesn't trigger re-renders.
+  const dragOverIndexRef  = useRef<number | null>(null);
+  const dragTargetElRef   = useRef<HTMLElement | null>(null);
   const thumbRowRef    = useRef<HTMLDivElement>(null);
   const autoScrollRef  = useRef<number | null>(null);
 
@@ -161,11 +163,33 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   // ── Drag-to-reorder handlers for failed thumbnail strip ───────────────────
 
+  /**
+   * Applies the drag-over highlight directly to the DOM without triggering a
+   * React re-render. Stores the currently highlighted element in a ref so the
+   * previous highlight can be efficiently removed on the next call.
+   */
+  const applyDragTarget = useCallback((idx: number | null, activeDragIdx: number | null) => {
+    // Remove highlight from the previously highlighted element.
+    if (dragTargetElRef.current) {
+      dragTargetElRef.current.classList.remove("is-drag-target");
+      dragTargetElRef.current = null;
+    }
+    dragOverIndexRef.current = idx;
+    if (idx === null || !thumbRowRef.current) return;
+    const children = Array.from(thumbRowRef.current.children) as HTMLElement[];
+    const el = children[idx];
+    // Only highlight when it's a different slot than the item being dragged.
+    if (el && activeDragIdx !== idx) {
+      el.classList.add("is-drag-target");
+      dragTargetElRef.current = el;
+    }
+  }, []);
+
   const handleThumbPointerDown = useCallback((idx: number) => (e: React.PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragIndex(idx);
-    setDragOverIndex(idx);
-  }, []);
+    applyDragTarget(idx, idx); // same slot → no highlight yet
+  }, [applyDragTarget]);
 
   const handleThumbRowPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (dragIndex === null || !thumbRowRef.current) return;
@@ -198,15 +222,18 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
 
     // ── Hit-test: getBoundingClientRect() is in viewport coords, matching clientX ──
+    // Update highlight directly in the DOM — no setState, no re-render.
     const children = Array.from(container.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
       const rect = children[i].getBoundingClientRect();
       if (e.clientX >= rect.left && e.clientX <= rect.right) {
-        setDragOverIndex(i);
+        if (dragOverIndexRef.current !== i) {
+          applyDragTarget(i, dragIndex);
+        }
         break;
       }
     }
-  }, [dragIndex]);
+  }, [dragIndex, applyDragTarget]);
 
   const stopAutoScroll = useCallback(() => {
     if (autoScrollRef.current !== null) {
@@ -218,9 +245,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   /** Cancel an in-progress drag without reordering (Escape or pointer cancel). */
   const cancelDrag = useCallback(() => {
     stopAutoScroll();
+    applyDragTarget(null, null);
     setDragIndex(null);
-    setDragOverIndex(null);
-  }, [stopAutoScroll]);
+  }, [stopAutoScroll, applyDragTarget]);
 
   // Cancel the drag when the user presses Escape.
   useEffect(() => {
@@ -234,23 +261,24 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   const handleThumbRowPointerUp = useCallback(() => {
     stopAutoScroll();
-    if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex) {
+    const overIdx = dragOverIndexRef.current;
+    if (dragIndex !== null && overIdx !== null && dragIndex !== overIdx) {
       setFailedFiles(prev => {
         const next = [...prev];
         const [moved] = next.splice(dragIndex, 1);
-        next.splice(dragOverIndex, 0, moved);
+        next.splice(overIdx, 0, moved);
         return next;
       });
       setFailedThumbnails(prev => {
         const next = [...prev];
         const [moved] = next.splice(dragIndex, 1);
-        next.splice(dragOverIndex, 0, moved);
+        next.splice(overIdx, 0, moved);
         return next;
       });
     }
+    applyDragTarget(null, null);
     setDragIndex(null);
-    setDragOverIndex(null);
-  }, [dragIndex, dragOverIndex, stopAutoScroll]);
+  }, [dragIndex, stopAutoScroll, applyDragTarget]);
 
   const confirmClose = useCallback(() => {
     bgGenRef.current += 1;   // cancel any in-flight removal
@@ -547,11 +575,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                         {failedThumbnails.map((thumb, idx) => {
                           const file       = failedFiles[idx];
                           const isDragging = dragIndex === idx;
-                          const isTarget   = dragOverIndex === idx && dragIndex !== null && dragIndex !== idx;
                           return (
                             <div
                               key={idx}
-                              className="flex-shrink-0 flex flex-col items-center gap-1 transition-opacity"
+                              className="thumb-item flex-shrink-0 flex flex-col items-center gap-1 transition-opacity"
                               style={{
                                 scrollSnapAlign: "start",
                                 width: 72,
@@ -560,13 +587,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                               }}
                               onPointerDown={handleThumbPointerDown(idx)}
                             >
+                              {/* Border highlight is toggled via the .is-drag-target CSS class
+                                  applied directly to the parent DOM node to avoid re-renders. */}
                               <div
-                                className={[
-                                  "relative w-16 h-16 rounded-xl border-2 overflow-hidden bg-amber-50 transition-all",
-                                  isTarget
-                                    ? "border-blue-500 shadow-[0_0_0_2px_rgba(59,130,246,0.4)]"
-                                    : "border-amber-400",
-                                ].join(" ")}
+                                className="thumb-border relative w-16 h-16 rounded-xl border-2 overflow-hidden bg-amber-50 transition-all border-amber-400"
                               >
                                 {thumb ? (
                                   <img
