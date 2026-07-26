@@ -331,7 +331,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setPhase("pick");
   }, []);
 
-  const handleFiles = useCallback(async (files: File[]) => {
+  const handleFiles = useCallback(async (
+    files: File[],
+    existingThumbnailMap?: Map<File, string>,
+  ) => {
     if (files.length === 0) return;
     setErrorMsg(null);
     setPhase(files.length === 1 ? "cleaning" : "uploading");
@@ -380,7 +383,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setFailedThumbnails([]);
       handleClose();
     } else {
-      const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
+      // Reuse pre-existing thumbnails where available (preserves any
+      // custom order the user set before hitting Retry), only regenerate
+      // for files that don't have a cached thumbnail yet.
+      const thumbs = await Promise.all(
+        errored.map((f) => existingThumbnailMap?.get(f) ?? fileToThumbnail(f)),
+      );
       setFailedThumbnails(thumbs);
       setFailedFiles(errored);
       setErrorMsg(stripState.errorMsg);
@@ -543,10 +551,16 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                     <button
                       onClick={() => {
                         const filesToRetry = [...failedFiles];
+                        // Build a File → thumbnail map so handleFiles can
+                        // reuse existing thumbnails for any files that fail
+                        // again, preserving the user's custom ordering.
+                        const thumbMap = new Map<File, string>(
+                          failedFiles.map((f, i) => [f, failedThumbnails[i]]),
+                        );
                         setErrorMsg(null);
                         setFailedThumbnails([]);
                         setFailedFiles([]);
-                        handleFiles(filesToRetry);
+                        handleFiles(filesToRetry, thumbMap);
                       }}
                       className="w-full py-2.5 border-2 border-black rounded-xl bg-primary font-display font-bold text-sm uppercase tracking-tight
                                  shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
