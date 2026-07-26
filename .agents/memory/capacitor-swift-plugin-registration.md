@@ -1,45 +1,42 @@
 ---
-name: Capacitor Swift plugin registration
-description: Definitive approach for registering a local Capacitor plugin in a pure-Swift iOS project — and every API that does NOT exist.
+name: Capacitor Swift plugin registration — DO NOT USE
+description: Why the native Swift plugin approach was abandoned and what to use instead.
 ---
 
-## The rule
-Register via the ObjC `.m` file containing the `CAP_PLUGIN` macro.  This is
-the only approach confirmed to work end-to-end on a real device.
+## Current approach: @imgly/background-removal (JS/WASM)
 
-```objc
-// PhotoCleanupPlugin.m
-#import <Foundation/Foundation.h>
-#import <Capacitor/Capacitor.h>
+Background removal now uses `@imgly/background-removal` — a pure JS/WASM library that
+works in WKWebView (Capacitor iOS), browsers, and Android with zero native code.
 
-CAP_PLUGIN(PhotoCleanupPlugin, "PhotoCleanup",
-    CAP_PLUGIN_METHOD(processPhoto, CAPPluginReturnPromise);
-)
+```typescript
+// src/lib/backgroundRemoval.ts
+import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
+// model: "isnet_fp16" — valid values: "isnet" | "isnet_fp16" | "isnet_quint8"
+// Do NOT use "small" or "medium" — not valid in v1.7
 ```
 
-**Why:** The JS bridge dispatches calls keyed on the JS plugin name `"PhotoCleanup"`
-(set by `registerPlugin("PhotoCleanup", ...)`).  `registerPluginInstance()` registers
-the plugin under the Swift/ObjC *class* name `"PhotoCleanupPlugin"` — the names
-never match, so every call throws and the UNAVAILABLE error state appears.
-The `CAP_PLUGIN` macro explicitly maps class → JS name and declares each bridged
-method, which is what the bridge actually uses.
+Vite config **must** have:
+```ts
+optimizeDeps: { exclude: ['@imgly/background-removal'] }
+```
+Without this, Vite crashes pre-bundling the library (dynamic WASM imports).
 
-**How to apply:** Copy both `PhotoCleanupPlugin.swift` and `PhotoCleanupPlugin.m`
-into `ios/App/App/` in CI, then add both to the Xcode compile build phase via
-`add_to_xcodeproj.rb`.  No storyboard patching or custom view controller needed.
+**Why:** Native Swift/CAP_PLUGIN approach was abandoned after persistent failures:
+- Swift classes inside dynamic frameworks use lazy ObjC registration — never found by Capacitor's objc_getClassList
+- `registerPluginInstance()` registers under Swift class name "PhotoCleanupPlugin", JS bridge looks for "PhotoCleanup" — names never match, every call threw
+- Storyboard patching (MyViewController) caused repeated ibtool "Attribute customModule redefined" errors
+- CAP_PLUGIN macro + .m file compiled fine but still had the lazy-registration problem at runtime
 
-## What does NOT work
-| Attempted call | Result |
+## What does NOT work (do not retry)
+| Attempted approach | Why it fails |
 |---|---|
-| `CAPBridge.register(pluginClass:withName:)` | compile error: no member 'register' |
-| `CAPBridgeViewController.registerPlugin(_:)` | compile error: no member 'registerPlugin' |
-| `bridge?.registerPluginInstance(PhotoCleanupPlugin())` in `MyViewController.capacitorDidLoad()` | compiles and runs but JS name mismatch → bridge throws on every call |
+| `bridge?.registerPluginInstance(PhotoCleanupPlugin())` | Registers under class name, not JS name — permanent mismatch |
+| `CAP_PLUGIN` macro + ObjC .m file | Lazy ObjC registration in dynamic frameworks; not found by Capacitor |
+| Subclass `CAPBridgeViewController`, patch storyboard | ibtool errors + same lazy-registration problem |
+| `CAPBridge.register(pluginClass:withName:)` | Method does not exist |
+| `CAPBridgeViewController.registerPlugin(_:)` | Method does not exist |
 
-## CI implementation (codemagic_scripts/)
-The `ios/` folder is `rm -rf`'d and recreated fresh on every build via
-`cap add ios && cap sync ios`. The inject step:
-1. Copies `native/PhotoCleanupPlugin.swift` into `ios/App/App/`
-2. Copies `native/PhotoCleanupPlugin.m` into `ios/App/App/`
-3. Runs `add_to_xcodeproj.rb` — adds both files to the App target compile phase
-
-No storyboard patching, no custom view controller, no AppDelegate injection needed.
+## Native Swift files
+`native/PhotoCleanupPlugin.swift` and `native/PhotoCleanupPlugin.m` remain in the
+repo but are NOT used in the active build pipeline. The codemagic inject step
+no longer copies them.
