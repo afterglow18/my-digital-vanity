@@ -118,6 +118,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Local image URL — starts from item, updates immediately when user picks a cleaned version
+  const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
+
   // Photo cleanup state
   const [cleanupProcessing, setCleanupProcessing] = useState(false);
   const [cleanupError, setCleanupError]           = useState<string | null>(null);
@@ -134,6 +137,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
   useEffect(() => {
     if (item) setForm(toForm(item));
+    setLocalImageUrl(null);
     setShowDeleteConfirm(false);
     setCleanupError(null);
     setCleanupProcessing(false);
@@ -210,14 +214,12 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   };
 
   const handleCompareSelect = (dataUrl: string) => {
+    // Update the displayed photo immediately — don't wait for the DB round-trip.
+    setLocalImageUrl(dataUrl);
+    setCompareData(null);
     updateItem.mutate(
       { id: item.id, data: { imageObjectPath: dataUrl } },
-      {
-        onSuccess: () => {
-          invalidate();
-          setCompareData(null);
-        },
-      },
+      { onSuccess: () => invalidate() },
     );
   };
 
@@ -279,7 +281,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
             }}
           >
             <img
-              src={getImageUrl(item.imageObjectPath)!}
+              src={getImageUrl(localImageUrl ?? item.imageObjectPath)!}
               alt={item.name}
               className="w-full h-full object-contain"
             />
