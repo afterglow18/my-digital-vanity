@@ -1,0 +1,288 @@
+Add background removal to this app's photo upload flow. When a user picks or takes a photo, show a side-by-side Original | Cleaned ✨ comparison. The user taps to choose which version to save. Implement it exactly as described below — every file and every line is specified.
+
+1 — Install the package
+
+npm install @imgly/background-removal@^1.7.0
+2 — Vite config change (required or the build crashes)
+
+In every vite.config.ts / vite.config.js in the project, add this inside defineConfig({}):
+
+optimizeDeps: {
+  exclude: ['@imgly/background-removal'],
+},
+3 — Create src/lib/backgroundRemoval.ts (exact file)
+
+import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
+/**
+ * Remove the background from a JPEG/PNG base64 data-URL.
+ * Returns a PNG data-URL with transparent background.
+ * On first ever call downloads ~15 MB ONNX model from imgly CDN (cached after that).
+ * Throws on network error or unreadable image — callers should catch and fall back.
+ */
+export async function removeBackground(dataUrl: string): Promise<string> {
+  const sourceBlob = await dataUrlToBlob(dataUrl);
+  const resultBlob = await imglyRemoveBackground(sourceBlob, {
+    model: "isnet_fp16",           // valid values: "isnet" | "isnet_fp16" | "isnet_quint8"
+    output: { format: "image/png", quality: 0.9 },
+    // publicPath omitted → library uses staticimgly CDN automatically
+  });
+  return blobToDataUrl(resultBlob);
+}
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
+  const res = await fetch(dataUrl);
+  return res.blob();
+}
+4 — Photo upload component (full implementation)
+
+Find the component where users pick or take photos. Replace or add the following. Every piece is required.
+
+4a — Imports
+
+import { useState, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Loader2, RotateCcw, Check } from "lucide-react";
+import { removeBackground, blobToDataUrl, dataUrlToBlob } from "@/lib/backgroundRemoval";
+4b — Phase type and state
+
+type Phase = "pick" | "encoding" | "preview" | "uploading";
+const [phase,        setPhase]        = useState<Phase>("pick");
+const [errorMsg,     setErrorMsg]     = useState<string | null>(null);
+const [originalBlob, setOriginalBlob] = useState<Blob | null>(null);
+const [originalUrl,  setOriginalUrl]  = useState<string | null>(null);
+const [cleanedBlob,  setCleanedBlob]  = useState<Blob | null>(null);
+const [cleanedUrl,   setCleanedUrl]   = useState<string | null>(null);
+const [bgProcessing, setBgProcessing] = useState(false);
+const [bgFailed,     setBgFailed]     = useState(false);
+const [selected,     setSelected]     = useState<"original" | "cleaned">("original");
+// Each photo bumps this counter. Every async step checks it before
+// writing state — prevents a slow first photo from clobbering a fast second one.
+const bgGenRef = useRef(0);
+4c — encodeForUpload helper (put outside the component)
+
+async function encodeForUpload(input: File | Blob): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(input);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      const MAX = 2048;
+      const scale = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth  * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (b) => (b && b.size > 1000 ? resolve(b) : reject(new Error("blank image"))),
+        "image/jpeg",
+        0.85,
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("failed to load image"));
+    };
+    img.src = objectUrl;
+  });
+}
+4d — handleClose (call on cancel/close)
+
+const handleClose = useCallback(() => {
+  bgGenRef.current += 1;    // cancels any in-flight removal
+  setBgProcessing(false);   // MUST reset — close can happen mid-removal
+  setPhase("pick");
+  setErrorMsg(null);
+  setOriginalBlob(null);
+  setOriginalUrl(null);
+  setCleanedBlob(null);
+  setCleanedUrl(null);
+  setBgFailed(false);
+  setSelected("original");
+  // add your own close logic here (e.g. onOpenChange(false))
+}, []);
+4e — handleFile (call after user picks or takes a photo)
+
+const handleFile = useCallback(async (file: File | Blob) => {
+  setErrorMsg(null);
+  // Switch to "encoding" phase BEFORE any async work so the user sees a
+  // full-screen spinner immediately instead of a blank pick screen for 1-3 s.
+  const myGen = ++bgGenRef.current;
+  setOriginalBlob(null);
+  setOriginalUrl(null);
+  setCleanedBlob(null);
+  setCleanedUrl(null);
+  setBgFailed(false);
+  setBgProcessing(false);
+  setSelected("original");
+  setPhase("encoding");
+  // Encode to JPEG ≤ 2048px
+  let jpeg: Blob;
+  try {
+    jpeg = await encodeForUpload(file);
+  } catch (err) {
+    if (bgGenRef.current !== myGen) return;
+    setErrorMsg(`Could not read the photo: ${err instanceof Error ? err.message : String(err)}`);
+    setPhase("pick");
+    return;
+  }
+  if (bgGenRef.current !== myGen) return;
+  // Show original, switch to comparison screen
+  setOriginalBlob(jpeg);
+  setOriginalUrl(URL.createObjectURL(jpeg));
+  setPhase("preview");
+  // Background removal — generation guard discards stale results
+  setBgProcessing(true);
+  try {
+    const dataUrl = await blobToDataUrl(jpeg);
+    if (bgGenRef.current !== myGen) return;
+    const resultUrl = await removeBackground(dataUrl);
+    if (bgGenRef.current !== myGen) return;
+    const resultBlob   = await dataUrlToBlob(resultUrl);
+    const resultObjUrl = URL.createObjectURL(resultBlob);
+    if (bgGenRef.current !== myGen) { URL.revokeObjectURL(resultObjUrl); return; }
+    setCleanedBlob(resultBlob);
+    setCleanedUrl(resultObjUrl);
+    setSelected("cleaned");
+  } catch (err) {
+    if (bgGenRef.current !== myGen) return;
+    console.warn("Background removal failed:", err);
+    setBgFailed(true);
+  } finally {
+    if (bgGenRef.current === myGen) setBgProcessing(false);
+  }
+}, []);
+4f — handleSave (wire to your storage logic)
+
+const handleSave = useCallback(async () => {
+  const blob = selected === "cleaned" && cleanedBlob ? cleanedBlob : originalBlob;
+  if (!blob) return;
+  const ext = selected === "cleaned" && cleanedBlob ? "png" : "jpg";
+  setPhase("uploading");
+  try {
+    // replace this with your actual save logic:
+    await yourSaveFunction(blob, `photo-${Date.now()}.${ext}`);
+    handleClose();
+  } catch (err) {
+    setErrorMsg(`Save failed: ${err instanceof Error ? err.message : String(err)}`);
+    setPhase("preview");
+  }
+}, [selected, cleanedBlob, originalBlob, handleClose]);
+4g — JSX
+
+<AnimatePresence mode="wait" initial={false}>
+  {/* ── Pick ── */}
+  {phase === "pick" && (
+    <motion.div key="pick"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
+      {errorMsg && <p style={{ color: "red" }}>{errorMsg}</p>}
+      <button onClick={() => {/* open camera, then call handleFile(blob) */}}>
+        Take Photo
+      </button>
+      <button onClick={() => {/* open gallery, then call handleFile(blob) */}}>
+        Upload Photo
+      </button>
+    </motion.div>
+  )}
+  {/* ── Encoding — full-screen spinner shown immediately after photo is picked ── */}
+  {phase === "encoding" && (
+    <motion.div key="encoding"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center",
+               justifyContent: "center", flex: 1, gap: 20, padding: 24 }}>
+      <Loader2 size={48} className="animate-spin" />
+      <p style={{ fontWeight: "bold", fontSize: 22 }}>Processing…</p>
+      <p style={{ color: "#888", fontSize: 14 }}>Getting your photo ready.</p>
+    </motion.div>
+  )}
+  {/* ── Preview — side-by-side comparison ── */}
+  {phase === "preview" && (
+    <motion.div key="preview"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
+      style={{ display: "flex", flexDirection: "column", gap: 16, padding: 20 }}>
+      {errorMsg && <p style={{ color: "red" }}>{errorMsg}</p>}
+      <p style={{ textAlign: "center", fontWeight: "bold", fontSize: 11,
+                  textTransform: "uppercase", letterSpacing: 2, opacity: 0.4 }}>
+        {bgProcessing ? "This will take a moment…" : bgFailed ? "Original" : "Tap to choose"}
+      </p>
+      <div style={{ display: "flex", gap: 12 }}>
+        {/* Original card */}
+        <button onClick={() => setSelected("original")}
+                style={{ flex: 1, opacity: selected === "original" ? 1 : 0.5,
+                         border: selected === "original" ? "4px solid black" : "4px solid rgba(0,0,0,0.2)",
+                         borderRadius: 16, overflow: "hidden", background: "none", padding: 0 }}>
+          <img src={originalUrl!} alt="Original"
+               style={{ width: "100%", objectFit: "contain", maxHeight: 176, display: "block" }} />
+          <p style={{ textAlign: "center", fontWeight: "bold", fontSize: 11,
+                      textTransform: "uppercase", padding: "6px 0" }}>Original</p>
+        </button>
+        {/* Cleaned card */}
+        <button onClick={() => cleanedUrl && setSelected("cleaned")}
+                disabled={!cleanedUrl}
+                style={{ flex: 1, opacity: selected === "cleaned" && cleanedUrl ? 1 : 0.5,
+                         border: selected === "cleaned" && cleanedUrl ? "4px solid black" : "4px solid rgba(0,0,0,0.2)",
+                         borderRadius: 16, overflow: "hidden", background: "none", padding: 0 }}>
+          {/* checkerboard shows through transparent areas */}
+          <div style={{ background: "repeating-conic-gradient(#d1d5db 0% 25%, white 0% 50%) 0 0 / 12px 12px",
+                        minHeight: 176, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            {cleanedUrl ? (
+              <img src={cleanedUrl} alt="Cleaned"
+                   style={{ width: "100%", objectFit: "contain", maxHeight: 176, display: "block" }} />
+            ) : bgFailed ? (
+              <p style={{ fontSize: 12, fontWeight: "bold", textTransform: "uppercase",
+                          opacity: 0.4, textAlign: "center", padding: "0 12px" }}>
+                Could not remove background
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                <Loader2 size={32} style={{ opacity: 0.5 }} className="animate-spin" />
+                <p style={{ fontSize: 13, fontWeight: "bold", textTransform: "uppercase",
+                            opacity: 0.5, margin: 0 }}>Processing</p>
+              </div>
+            )}
+          </div>
+          <p style={{ textAlign: "center", fontWeight: "bold", fontSize: 11,
+                      textTransform: "uppercase", padding: "6px 0" }}>Cleaned ✨</p>
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 12 }}>
+        <button onClick={() => setPhase("pick")}>↩ Retake</button>
+        <button onClick={handleSave} disabled={bgProcessing}>
+          {bgProcessing ? "Processing…" : "✓ Save to Closet"}
+        </button>
+      </div>
+    </motion.div>
+  )}
+  {/* ── Uploading ── */}
+  {phase === "uploading" && (
+    <motion.div key="uploading"
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }} transition={{ duration: 0.12 }}
+      style={{ display: "flex", flexDirection: "column", alignItems: "center",
+               justifyContent: "center", flex: 1, gap: 20 }}>
+      <Loader2 size={48} className="animate-spin" />
+      <p style={{ fontWeight: "bold", fontSize: 22 }}>Saving…</p>
+    </motion.div>
+  )}
+</AnimatePresence>
+Bugs you will hit without these exact patterns
+
+Bug	What happens without the fix
+Generation counter (bgGenRef)	Take photo #2 while #1 is still processing → #1's finally fires setBgProcessing(false) on #2's state, killing the spinner silently. #1's result also overwrites #2's cleaned image.
+setBgProcessing(false) in handleClose	Close the sheet mid-removal → bgProcessing stays true. Next open has Save disabled with no explanation.
+phase = "encoding" before first await	Skip it → user sits on the pick screen for 1-3 s during canvas encode. Looks like a crash.
+AnimatePresence initial={false}	Skip it → pick screen fades in from opacity 0 over ~400 ms every open. Looks blank.
+transition={{ duration: 0.12 }}	Skip it → default spring exit takes ~400 ms; pick→encoding→preview = three 400 ms blank gaps stacked. Looks like a crash.
+mode="wait" not mode="sync"	sync collapses flex children with no explicit height during simultaneous transitions → its own blank screen.
+Model name "isnet_fp16" not "medium"	"medium" is not a valid value in v1.7 → TypeScript error, build fails.
