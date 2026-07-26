@@ -341,7 +341,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 >
                   <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#D0909A" }} />
                   <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
-                    <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device after you take a photo.
+                    <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device after you add a photo.
                   </p>
                 </div>
               )}
