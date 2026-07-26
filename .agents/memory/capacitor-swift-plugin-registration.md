@@ -1,17 +1,35 @@
 ---
 name: Capacitor Swift plugin registration
-description: Correct Swift API for registering a local Capacitor plugin without ObjC — and what does NOT work.
+description: Definitive approach for registering a local Capacitor plugin in a pure-Swift iOS project — and every API that does NOT exist.
 ---
 
 ## The rule
-Use `CAPBridgeViewController.registerPlugin(PhotoCleanupPlugin.self)` — call it inside `application(_:didFinishLaunchingWithOptions:)` in AppDelegate.swift, before `return true`.
+Register via `bridge?.registerPluginInstance(PhotoCleanupPlugin())` called inside
+`capacitorDidLoad()` of a `CAPBridgeViewController` subclass (`MyViewController`).
+The storyboard's Capacitor scene must use `MyViewController` as its custom class
+for `capacitorDidLoad()` to fire.
 
-`CAPBridge.register(pluginClass:withName:)` does **not** exist and causes a compile error ("type 'CAPBridge' has no member 'register'").
+**Why:** This is the only public Swift API that actually compiles against the
+Capacitor version installed by `cap add ios`. Two guesses both failed at compile time:
+- `CAPBridge.register(pluginClass:withName:)` — method does not exist
+- `CAPBridgeViewController.registerPlugin(_:)` — method does not exist
 
-**Why:** We tried `CAPBridge.register(pluginClass:withName:)` based on incorrect assumptions about the API surface; the build confirmed it doesn't exist. `CAPBridgeViewController.registerPlugin(_:)` is the actual static method exposed by Capacitor 5+ for Swift-side plugin registration.
+## What does NOT work
+| Attempted call | Result |
+|---|---|
+| `CAPBridge.register(pluginClass:withName:)` | compile error: no member 'register' |
+| `CAPBridgeViewController.registerPlugin(_:)` | compile error: no member 'registerPlugin' |
+| ObjC `.m` file + `CAP_PLUGIN` macro (dropped earlier) | was actually working for registration; payload size was the real bug |
 
-**How to apply:** The injection is done by `codemagic_scripts/inject_appdelegate.py`, which patches AppDelegate.swift at build time (the ios/ folder is regenerated from scratch each CI run via `cap add ios && cap sync ios`). The script is idempotent — it skips patching if 'PhotoCleanupPlugin' is already present.
+## CI implementation (codemagic_scripts/)
+The `ios/` folder is `rm -rf`'d and recreated fresh on every build via
+`cap add ios && cap sync ios`. The inject step therefore:
+1. Copies `native/MyViewController.swift` into `ios/App/App/`
+2. Runs `patch_storyboard.py` — replaces `customClass="CAPBridgeViewController"`
+   with `customClass="MyViewController" customModule="App"` in `Main.storyboard`
+3. Runs `inject_appdelegate.py` — safety net that strips any stale registration
+   lines from `AppDelegate.swift` (AppDelegate needs no plugin registration code)
+4. Runs `add_to_xcodeproj.rb` — adds both Swift files to the App target build phase
 
-## What we dropped and why
-- ObjC `.m` file with `CAP_PLUGIN` macro: requires ObjC `+load`, which is unavailable in a pure-Swift Capacitor target — plugin was silently never registered.
-- Bash heredoc in codemagic.yaml for the Python/Ruby scripts: Codemagic's YAML parser read heredoc body lines starting at column 1 as bare YAML keys and threw a parse error. Fixed by moving scripts to `codemagic_scripts/` files called with `python3 ...` / `ruby ...`.
+**Why:** No static Swift registration API exists; the storyboard subclass approach
+is the documented Capacitor path and survives `cap sync` regeneration.
