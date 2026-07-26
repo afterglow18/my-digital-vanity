@@ -82,16 +82,28 @@ Three states for the Cleaned card:
 `chosen` state initialises to `"original"`, auto-switches to `"cleaned"` via useEffect when `cleanedDataUrl` arrives.
 Save button disabled when `bgProcessing`; label shows "Processing…".
 
-## Why the first photo worked but second didn't (root cause)
+## Root causes of blank screens (confirmed)
 
-First use: model downloads (~15 MB) + WASM initialises → removal takes 30-60 s.
-React rendered "cleaning" fully before "comparing" was set.
+**1. AnimatePresence mode="wait" on phase switching — the primary culprit**
+Every phase change (pick → encoding → preview) makes the exiting element fade out
+before the entering element starts. The default spring exit takes ~300–400 ms. Three
+phase changes in quick succession = three gaps back-to-back, easily 1 s of nothing.
+**Fix: remove AnimatePresence entirely from inner phase switching. Use plain
+conditional divs. Content switches instantly, no gap possible.**
+Never use AnimatePresence around `{phase === "x" && ...}` blocks.
 
-Second use: cached model + warm WASM worker → removal is near-instant.
-React batched `setPhase("cleaning")` + `setPhase("comparing")` into one render.
-`AnimatePresence mode="wait"` held the entering element while exiting "pick".
-A concurrent re-render from `queryClient.invalidateQueries` mid-exit caused
-Framer Motion to drop the queued "comparing" entry entirely.
+**2. Missing initial={false} on open**
+Even without phase changes, the pick screen started at opacity: 0 and animated
+to opacity: 1 over ~400 ms every time the sheet opened — looked blank.
+Fix was `initial={false}` on AnimatePresence; moot once AnimatePresence was removed.
 
-Fix: the encoding phase now always takes 1-3 s (canvas resize), so `mode="wait"`
-always has time to complete the exit before "preview" enters.
+**3. No spinner before encoding**
+`encodeForUpload` (canvas resize + toBlob) takes 1–3 s on device. Previously the
+phase didn't switch until after encoding, so the pick screen froze silently.
+**Fix: `setPhase("encoding")` as the very first statement in handleFile, before
+any await**, so the spinner appears the instant the user picks a photo.
+
+**Note on WKWebView image decode** — the "pre-decode via new Image() + overlay"
+approach was added based on a wrong diagnosis (blamed WKWebView cache). It is
+belt-and-suspenders and does no harm, but the actual blank screen was caused by
+AnimatePresence gaps, not image decode latency.
