@@ -103,7 +103,35 @@ phase didn't switch until after encoding, so the pick screen froze silently.
 **Fix: `setPhase("encoding")` as the very first statement in handleFile, before
 any await**, so the spinner appears the instant the user picks a photo.
 
-**Note on WKWebView image decode** — the "pre-decode via new Image() + overlay"
-approach was added based on a wrong diagnosis (blamed WKWebView cache). It is
-belt-and-suspenders and does no harm, but the actual blank screen was caused by
-AnimatePresence gaps, not image decode latency.
+**Image decode — the correct pattern (confirmed on TestFlight)**
+
+After AnimatePresence gaps were eliminated, a 1-2 s blank still appeared between
+the encoding spinner and the compare screen. Two compounding bugs:
+
+1. `new Image().onload` fires when image HEADERS are parsed (intrinsic size known),
+   NOT when the pixel bitmap is decoded. The promise resolved near-instantly, so
+   `setPhase("preview")` fired before decode completed — blank while WebKit decoded.
+
+2. Without `flushSync`, React batched `setOriginalDataUrl` + `setPhase("preview")`
+   into a single flush. The in-DOM `<img>` never had its src while the spinner was
+   still covering it, so there was nothing to pre-decode.
+
+**Correct pattern:**
+```javascript
+import { flushSync } from "react-dom";
+
+// Force React to flush immediately — in-DOM <img> gets src while spinner covers it
+flushSync(() => setOriginalDataUrl(origDataUrl));
+
+// img.decode() waits for full BITMAP decode, not just header parse
+const img = new Image();
+img.src = origDataUrl;
+await img.decode().catch(() => {});
+
+// Spinner removed — image already decoded and painted underneath
+setPhase("preview");
+```
+
+The combined encoding/preview JSX block (PhotoCompareSheet mounted behind an
+absolute spinner overlay) is still required — the in-DOM `<img>` must exist
+in the DOM during the `flushSync` + `decode()` wait for this to work.
