@@ -212,9 +212,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     // Multiple files — save all directly, skip comparison
     let saved = 0;
     for (let i = 0; i < files.length; i++) {
+      setProgress({ done: i, total: files.length });
       const ok = await handleFile(files[i], i);
       if (ok && ok !== "comparing") saved++;
-      setProgress({ done: i + 1, total: files.length });
     }
     if (saved === 0) {
       setErrorMsg("Could not save the photos. Please try again.");
@@ -367,7 +367,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               </div>
               <div className="text-center">
                 <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                  Cleaning up…
+                  {progress && progress.total > 1
+                    ? `Cleaning ${progress.done + 1} of ${progress.total}…`
+                    : "Cleaning up…"}
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
                   Processing your photo on‑device
