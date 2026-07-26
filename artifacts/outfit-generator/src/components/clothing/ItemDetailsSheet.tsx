@@ -135,6 +135,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     setShowDeleteConfirm(false);
     setCleanupError(null);
     setCleanupProcessing(false);
+    setCompareData(null);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!item || !form) return null;
