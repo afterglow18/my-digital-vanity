@@ -386,10 +386,21 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-2xl">🖼️</div>
                               )}
-                              {/* Failure badge */}
-                              <div className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-amber-500 border border-white flex items-center justify-center">
-                                <span className="text-white text-[9px] font-bold leading-none">!</span>
-                              </div>
+                              {/* Remove button */}
+                              <button
+                                onClick={() => {
+                                  const nextFiles  = failedFiles.filter((_, i) => i !== idx);
+                                  const nextThumbs = failedThumbnails.filter((_, i) => i !== idx);
+                                  setFailedFiles(nextFiles);
+                                  setFailedThumbnails(nextThumbs);
+                                  if (nextFiles.length === 0) setErrorMsg(null);
+                                }}
+                                aria-label="Remove photo from retry"
+                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black border-2 border-white flex items-center justify-center
+                                           active:scale-90 transition-transform"
+                              >
+                                <X className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                              </button>
                             </div>
                             <p className="text-[10px] text-amber-700 text-center leading-tight max-w-[72px] truncate px-0.5">
                               {file?.name ?? `Photo ${idx + 1}`}
@@ -406,9 +417,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   {failedFiles.length > 0 && (
                     <button
                       onClick={() => {
+                        const filesToRetry = [...failedFiles];
                         setErrorMsg(null);
                         setFailedThumbnails([]);
-                        handleFiles(failedFiles);
+                        setFailedFiles([]);
+                        handleFiles(filesToRetry);
                       }}
                       className="w-full py-2.5 border-2 border-black rounded-xl bg-primary font-display font-bold text-sm uppercase tracking-tight
                                  shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
