@@ -15,7 +15,7 @@
  */
 import React, { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Check, Sparkles } from "lucide-react";
+import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
@@ -119,6 +119,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [progress,           setProgress]          = useState<UploadProgress | null>(null);
   const [failedFiles,        setFailedFiles]        = useState<File[]>([]);
   const [failedThumbnails,   setFailedThumbnails]   = useState<string[]>([]);
+  const [dragIndex,          setDragIndex]          = useState<number | null>(null);
+  const [dragOverIndex,      setDragOverIndex]      = useState<number | null>(null);
+  const thumbRowRef = useRef<HTMLDivElement>(null);
 
   // Comparison state
   const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
@@ -132,6 +135,45 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   const createItem  = useCreateClothingItem();
   const queryClient = useQueryClient();
+
+  // ── Drag-to-reorder handlers for failed thumbnail strip ───────────────────
+
+  const handleThumbPointerDown = useCallback((idx: number) => (e: React.PointerEvent<HTMLDivElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDragIndex(idx);
+    setDragOverIndex(idx);
+  }, []);
+
+  const handleThumbRowPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragIndex === null || !thumbRowRef.current) return;
+    const children = Array.from(thumbRowRef.current.children) as HTMLElement[];
+    for (let i = 0; i < children.length; i++) {
+      const rect = children[i].getBoundingClientRect();
+      if (e.clientX >= rect.left && e.clientX <= rect.right) {
+        setDragOverIndex(i);
+        break;
+      }
+    }
+  }, [dragIndex]);
+
+  const handleThumbRowPointerUp = useCallback(() => {
+    if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex) {
+      setFailedFiles(prev => {
+        const next = [...prev];
+        const [moved] = next.splice(dragIndex, 1);
+        next.splice(dragOverIndex, 0, moved);
+        return next;
+      });
+      setFailedThumbnails(prev => {
+        const next = [...prev];
+        const [moved] = next.splice(dragIndex, 1);
+        next.splice(dragOverIndex, 0, moved);
+        return next;
+      });
+    }
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }, [dragIndex, dragOverIndex]);
 
   const handleClose = useCallback(() => {
     setPhase("pick");
@@ -367,53 +409,96 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                     {errorMsg}
                   </p>
 
-                  {/* Thumbnail strip for failed photos */}
+                  {/* Thumbnail strip for failed photos — drag to reorder */}
                   {failedThumbnails.length > 0 && (
-                    <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollSnapType: "x mandatory" }}>
-                      {failedThumbnails.map((thumb, idx) => {
-                        const file = failedFiles[idx];
-                        return (
-                          <div
-                            key={idx}
-                            className="flex-shrink-0 flex flex-col items-center gap-1"
-                            style={{ scrollSnapAlign: "start", width: 72 }}
-                          >
-                            <div className="relative w-16 h-16 rounded-xl border-2 border-amber-400 overflow-hidden bg-amber-50">
-                              {thumb ? (
-                                <img
-                                  src={thumb}
-                                  alt={file?.name ?? `Photo ${idx + 1}`}
-                                  className="w-full h-full object-cover"
-                                />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-2xl">🖼️</div>
-                              )}
-                              {/* Remove button */}
-                              <button
-                                onClick={() => {
-                                  const nextFiles  = failedFiles.filter((_, i) => i !== idx);
-                                  const nextThumbs = failedThumbnails.filter((_, i) => i !== idx);
-                                  setFailedFiles(nextFiles);
-                                  setFailedThumbnails(nextThumbs);
-                                  if (nextFiles.length === 0) setErrorMsg(null);
-                                }}
-                                aria-label="Remove photo from retry"
-                                className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black border-2 border-white flex items-center justify-center
-                                           active:scale-90 transition-transform"
+                    <>
+                      {failedThumbnails.length > 1 && (
+                        <p className="text-[10px] text-amber-600 text-center leading-tight -mb-1">
+                          Drag thumbnails to reorder before retrying
+                        </p>
+                      )}
+                      <div
+                        ref={thumbRowRef}
+                        className="flex gap-2 overflow-x-auto pb-1 touch-pan-x select-none"
+                        style={{ scrollSnapType: "x mandatory" }}
+                        onPointerMove={handleThumbRowPointerMove}
+                        onPointerUp={handleThumbRowPointerUp}
+                        onPointerLeave={handleThumbRowPointerUp}
+                      >
+                        {failedThumbnails.map((thumb, idx) => {
+                          const file       = failedFiles[idx];
+                          const isDragging = dragIndex === idx;
+                          const isTarget   = dragOverIndex === idx && dragIndex !== null && dragIndex !== idx;
+                          return (
+                            <div
+                              key={idx}
+                              className="flex-shrink-0 flex flex-col items-center gap-1 transition-opacity"
+                              style={{
+                                scrollSnapAlign: "start",
+                                width: 72,
+                                opacity: isDragging ? 0.4 : 1,
+                                cursor: dragIndex !== null ? "grabbing" : "grab",
+                              }}
+                              onPointerDown={handleThumbPointerDown(idx)}
+                            >
+                              <div
+                                className={[
+                                  "relative w-16 h-16 rounded-xl border-2 overflow-hidden bg-amber-50 transition-all",
+                                  isTarget
+                                    ? "border-blue-500 shadow-[0_0_0_2px_rgba(59,130,246,0.4)]"
+                                    : "border-amber-400",
+                                ].join(" ")}
                               >
-                                <X className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-                              </button>
+                                {thumb ? (
+                                  <img
+                                    src={thumb}
+                                    alt={file?.name ?? `Photo ${idx + 1}`}
+                                    className="w-full h-full object-cover pointer-events-none"
+                                    draggable={false}
+                                  />
+                                ) : (
+                                  <div className="w-full h-full flex items-center justify-center text-2xl">🖼️</div>
+                                )}
+                                {/* Remove button */}
+                                <button
+                                  onPointerDown={e => e.stopPropagation()}
+                                  onClick={() => {
+                                    const nextFiles  = failedFiles.filter((_, i) => i !== idx);
+                                    const nextThumbs = failedThumbnails.filter((_, i) => i !== idx);
+                                    setFailedFiles(nextFiles);
+                                    setFailedThumbnails(nextThumbs);
+                                    if (nextFiles.length === 0) setErrorMsg(null);
+                                  }}
+                                  aria-label="Remove photo from retry"
+                                  className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black border-2 border-white flex items-center justify-center
+                                             active:scale-90 transition-transform"
+                                >
+                                  <X className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+                                </button>
+                                {/* Position badge */}
+                                {failedThumbnails.length > 1 && (
+                                  <div className="absolute bottom-0.5 left-0.5 w-4 h-4 rounded-full bg-black/60 flex items-center justify-center">
+                                    <span className="text-white font-bold leading-none" style={{ fontSize: 8 }}>
+                                      {idx + 1}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              {/* Drag handle */}
+                              {failedThumbnails.length > 1 && (
+                                <GripHorizontal className="w-3.5 h-3.5 text-amber-400 -mt-0.5 pointer-events-none" />
+                              )}
+                              <p className="text-[10px] text-amber-700 text-center leading-tight max-w-[72px] truncate px-0.5">
+                                {file?.name ?? `Photo ${idx + 1}`}
+                              </p>
+                              <p className="text-[10px] text-amber-500 text-center leading-tight">
+                                Failed to save
+                              </p>
                             </div>
-                            <p className="text-[10px] text-amber-700 text-center leading-tight max-w-[72px] truncate px-0.5">
-                              {file?.name ?? `Photo ${idx + 1}`}
-                            </p>
-                            <p className="text-[10px] text-amber-500 text-center leading-tight">
-                              Failed to save
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
 
                   {failedFiles.length > 0 && (
