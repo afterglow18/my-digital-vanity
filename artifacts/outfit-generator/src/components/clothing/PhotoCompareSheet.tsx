@@ -259,7 +259,7 @@ export function PhotoCompareSheet({
       >
         <button
           onClick={handleSave}
-          disabled={bgProcessing}
+          disabled={bgProcessing && chosen === "cleaned"}
           className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
                      text-black border-2 border-black transition-all
                      active:translate-y-0.5 active:shadow-none disabled:opacity-50"
@@ -269,9 +269,9 @@ export function PhotoCompareSheet({
             letterSpacing: "0.05em",
           }}
         >
-          {bgProcessing
+          {bgProcessing && chosen === "cleaned"
             ? "Processing…"
-            : !hasClean
+            : !hasClean && !bgProcessing
               ? "Save Photo"
               : chosen === "cleaned"
                 ? "✨ Save Cleaned Version"

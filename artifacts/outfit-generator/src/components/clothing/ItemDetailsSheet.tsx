@@ -3,7 +3,7 @@
  * Every field is optional and editable. A "Save" button appears only when
  * the form is dirty. Delete is always available.
  */
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
@@ -121,6 +121,10 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   // Local image URL — starts from item, updates immediately when user picks a cleaned version
   const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
 
+  // Generation counter — incremented whenever a cleanup is started or cancelled so a
+  // stale WASM result can't re-open the compare sheet after the user already saved.
+  const cleanupIdRef = useRef(0);
+
   // Photo cleanup state
   const [cleanupProcessing, setCleanupProcessing] = useState(false);
   const [cleanupError, setCleanupError]           = useState<string | null>(null);
@@ -196,6 +200,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
   const handleCleanUpPhoto = async () => {
     if (!item.imageObjectPath) return;
+    const id = ++cleanupIdRef.current;
     const originalDataUrl = item.imageObjectPath;
     // Open the compare sheet immediately — the right card shows a spinner while removal runs.
     setCompareData({ originalDataUrl, cleanedDataUrl: "", hadSubject: true });
@@ -205,19 +210,29 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     try {
       const cleanedDataUrl = await removeBackground(
         originalDataUrl,
-        (p) => setRemovalProgress(p),
+        (p) => { if (cleanupIdRef.current === id) setRemovalProgress(p); },
       );
-      setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: true });
+      if (cleanupIdRef.current === id) {
+        setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: true });
+      }
     } catch (err) {
       console.error("Photo cleanup error:", err);
-      setCleanupError("Couldn't clean up this photo. Please try again.");
+      if (cleanupIdRef.current === id) {
+        setCleanupError("Couldn't clean up this photo. Please try again.");
+      }
     } finally {
-      setCleanupProcessing(false);
-      setRemovalProgress(null);
+      if (cleanupIdRef.current === id) {
+        setCleanupProcessing(false);
+        setRemovalProgress(null);
+      }
     }
   };
 
   const handleCompareSelect = (dataUrl: string) => {
+    // Cancel any in-flight removal so its result doesn't re-open the sheet.
+    cleanupIdRef.current++;
+    setCleanupProcessing(false);
+    setRemovalProgress(null);
     // Update the displayed photo immediately — don't wait for the DB round-trip.
     setLocalImageUrl(dataUrl);
     setCompareData(null);
