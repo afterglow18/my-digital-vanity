@@ -20,7 +20,7 @@ import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocal
 import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
 import { encodeToPng } from "@/lib/processImage";
-import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { removeBackground } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
 import { buildRetryStripState } from "@/lib/retryStripHelpers";
 
@@ -76,10 +76,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
     img.onerror = reject;
     img.src = url;
   });
-}
-
-function base64ToDataUrl(b64: string): string {
-  return `data:image/jpeg;base64,${b64}`;
 }
 
 /** Returns true if the error is an IndexedDB / browser storage quota error. */
@@ -258,9 +254,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   /**
    * Core single-file handler.
-   * On native iOS: always transitions to "comparing" so the user can
-   * review (and choose Original or Cleaned) before anything is saved.
-   * On web: saves immediately.
+   * Always transitions to "comparing" on all platforms — JS/WASM background
+   * removal works in WKWebView, browsers, and Android with no native plugin.
    */
   const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | true | false | "quota"> => {
     let png: Blob;
@@ -273,25 +268,17 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
     const origDataUrl = await blobToDataUrl(png);
 
-    // Always show comparison for single-file captures on all platforms.
-    // On native iOS: Vision runs and produces a cleaned version.
-    // On web: the cleaned panel shows a friendly "not available" message.
+    // Kick off background removal — works on every platform via JS/WASM.
     let cleanedUrl   = origDataUrl;
     let subjectFound = false;
-    let visionErr: string | null = isPhotoCleanupAvailable()
-      ? null
-      : "Clean Up is only available in the iOS app.";
+    let visionErr: string | null = null;
 
-    if (isPhotoCleanupAvailable()) {
-      try {
-        const b64    = await blobToBase64(png, 1200);
-        const result = await PhotoCleanup.processPhoto({ imageData: b64 });
-        cleanedUrl   = base64ToDataUrl(result.cleanedImageData);
-        subjectFound = result.hadSubject;
-      } catch (err) {
-        console.warn("[PhotoCleanup] Plugin error:", err);
-        visionErr = "Clean Up couldn't run on this photo.";
-      }
+    try {
+      cleanedUrl   = await removeBackground(origDataUrl);
+      subjectFound = true;
+    } catch (err) {
+      console.warn("[BackgroundRemoval] Failed:", err);
+      visionErr = "Clean Up couldn't run on this photo.";
     }
 
     setOriginalDataUrl(origDataUrl);
@@ -602,23 +589,21 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 </button>
               </div>
 
-              {/* Clean Up badge — only on native */}
-              {isPhotoCleanupAvailable() && (
-                <div
-                  className="flex items-start gap-2 px-3 py-2.5 rounded-xl border-2"
-                  style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
-                >
-                  <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#D0909A" }} />
-                  <div>
-                    <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
-                      <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device.
-                    </p>
-                    <p className="text-xs leading-snug mt-0.5" style={{ color: "#B07080" }}>
-                      A before/after comparison appears when adding a single photo.
-                    </p>
-                  </div>
+              {/* Clean Up badge — shown on all platforms (JS/WASM, no native plugin) */}
+              <div
+                className="flex items-start gap-2 px-3 py-2.5 rounded-xl border-2"
+                style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
+              >
+                <Sparkles className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: "#D0909A" }} />
+                <div>
+                  <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
+                    <span className="font-black">Clean Up Photo</span> — background removal runs on‑device.
+                  </p>
+                  <p className="text-xs leading-snug mt-0.5" style={{ color: "#B07080" }}>
+                    A before/after comparison appears when adding a single photo.
+                  </p>
                 </div>
-              )}
+              </div>
 
               <div className="border-2 border-black rounded-2xl bg-white p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
                 <p className="font-display font-bold text-sm uppercase tracking-tight mb-3 flex items-center gap-2">

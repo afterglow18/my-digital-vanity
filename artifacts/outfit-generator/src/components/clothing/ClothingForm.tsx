@@ -6,7 +6,7 @@ import type { ClothingCategory } from "@/types/local";
 import { ImagePlus, Loader2, Sparkles } from "lucide-react";
 import { getImageUrl } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
-import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { removeBackground } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
 
 const CATEGORIES: ClothingCategory[] = ["makeup", "skincare", "hair", "fragrances"];
@@ -28,11 +28,6 @@ interface ClothingFormProps {
   onSubmit: (data: ClothingFormData) => void;
   isSubmitting: boolean;
   submitLabel: string;
-}
-
-/** Convert a base64 string (no prefix) to a JPEG data URL. */
-function base64ToDataUrl(b64: string): string {
-  return `data:image/jpeg;base64,${b64}`;
 }
 
 /** Resize a File to at most 800px wide and return a JPEG data URL. */
@@ -84,42 +79,14 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
   const uploadFile = useCallback(async (file: File) => {
     setUploadPhase("cleaning");
     try {
-      // Always build the 800px JPEG original first
       const origDataUrl = await fileToDataUrl(file);
-
-      if (!isPhotoCleanupAvailable()) {
-        // Web/dev: skip Vision, commit immediately
-        form.setValue("imageObjectPath", origDataUrl);
-        setUploadPhase("idle");
-        return;
-      }
-
-      // Native path: run Vision cleanup
       try {
-        const b64    = await blobToBase64(file, 1200);
-        const result = await PhotoCleanup.processPhoto({ imageData: b64 });
-
-        console.log(
-          `[PhotoCleanup] supported:${result.supported} hadSubject:${result.hadSubject}`,
-        );
-
-        if (result.hadSubject) {
-          // Show comparison — defer commit until user chooses
-          const cleanedUrl = base64ToDataUrl(result.cleanedImageData);
-          setCompareState({
-            originalDataUrl: origDataUrl,
-            cleanedDataUrl:  cleanedUrl,
-            hadSubject:      result.hadSubject,
-          });
-          setUploadPhase("comparing");
-          return;
-        }
-
-        // No foreground subject found — save original without comparison
-        form.setValue("imageObjectPath", origDataUrl);
-        setUploadPhase("idle");
+        // JS/WASM background removal — works on all platforms, no native plugin needed.
+        const cleanedUrl = await removeBackground(origDataUrl);
+        setCompareState({ originalDataUrl: origDataUrl, cleanedDataUrl: cleanedUrl, hadSubject: true });
+        setUploadPhase("comparing");
       } catch (err) {
-        console.warn("[PhotoCleanup] Plugin error — saving original:", err);
+        console.warn("[BackgroundRemoval] Failed — saving original:", err);
         form.setValue("imageObjectPath", origDataUrl);
         setUploadPhase("idle");
       }
@@ -166,9 +133,7 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
             {uploadPhase === "cleaning" && (
               <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
                 <Loader2 className="w-12 h-12 text-white animate-spin" />
-                {isPhotoCleanupAvailable() && (
-                  <span className="text-white text-xs font-bold uppercase tracking-wider">Cleaning up…</span>
-                )}
+                <span className="text-white text-xs font-bold uppercase tracking-wider">Removing background…</span>
               </div>
             )}
 
@@ -185,18 +150,16 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
             />
           </div>
 
-          {/* Clean Up badge — only on native */}
-          {isPhotoCleanupAvailable() && (
-            <div
-              className="flex items-center gap-2 px-3 py-2.5 mt-2 rounded-xl border-2"
-              style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
-            >
-              <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#D0909A" }} />
-              <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
-                <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device after you choose a photo.
-              </p>
-            </div>
-          )}
+          {/* Clean Up badge — all platforms via JS/WASM */}
+          <div
+            className="flex items-center gap-2 px-3 py-2.5 mt-2 rounded-xl border-2"
+            style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
+          >
+            <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#D0909A" }} />
+            <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
+              <span className="font-black">Clean Up Photo</span> — background removal runs automatically after you choose a photo.
+            </p>
+          </div>
         </div>
 
         <div className="space-y-4">

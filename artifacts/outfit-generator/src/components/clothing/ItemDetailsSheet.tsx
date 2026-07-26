@@ -11,7 +11,7 @@ import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey }
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
-import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { removeBackground } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "./PhotoCompareSheet";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -190,18 +190,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     setCleanupError(null);
     try {
       const originalDataUrl = item.imageObjectPath;
-
-      // Convert the stored data URL → Blob → resize to 1200 px JPEG → raw base64.
-      // Stored images can be large PNGs (old WASM pipeline); passing them raw
-      // through the Capacitor bridge causes Data(base64Encoded:) to return nil.
-      const resp = await fetch(originalDataUrl);
-      const blob = await resp.blob();
-      const imageData = await blobToBase64(blob, 1200);
-
-      const result = await PhotoCleanup.processPhoto({ imageData });
-      const cleanedDataUrl = `data:image/jpeg;base64,${result.cleanedImageData}`;
-
-      setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: result.hadSubject });
+      // JS/WASM background removal — works on all platforms, no native plugin needed.
+      const cleanedDataUrl = await removeBackground(originalDataUrl);
+      setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: true });
     } catch (err) {
       console.error("Photo cleanup error:", err);
       setCleanupError("Couldn't clean up this photo. Please try again.");
@@ -286,8 +277,8 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
             />
           </div>
 
-          {/* Clean Up Photo button — native iOS only */}
-          {isPhotoCleanupAvailable() && (
+          {/* Clean Up Photo button — all platforms via JS/WASM */}
+          {item.imageObjectPath && (
             <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
               <button
                 onClick={handleCleanUpPhoto}
