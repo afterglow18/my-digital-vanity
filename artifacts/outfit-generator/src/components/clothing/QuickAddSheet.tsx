@@ -215,6 +215,23 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
   }, []);
 
+  /** Cancel an in-progress drag without reordering (Escape or pointer cancel). */
+  const cancelDrag = useCallback(() => {
+    stopAutoScroll();
+    setDragIndex(null);
+    setDragOverIndex(null);
+  }, [stopAutoScroll]);
+
+  // Cancel the drag when the user presses Escape.
+  useEffect(() => {
+    if (dragIndex === null) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancelDrag();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [dragIndex, cancelDrag]);
+
   const handleThumbRowPointerUp = useCallback(() => {
     stopAutoScroll();
     if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex) {
@@ -510,7 +527,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                         style={{ scrollSnapType: "x mandatory" }}
                         onPointerMove={handleThumbRowPointerMove}
                         onPointerUp={handleThumbRowPointerUp}
-                        onPointerLeave={handleThumbRowPointerUp}
+                        onPointerCancel={cancelDrag}
                       >
                         {failedThumbnails.map((thumb, idx) => {
                           const file       = failedFiles[idx];
