@@ -80,9 +80,10 @@ const PHOTO_TIPS = [
 ] as const;
 
 export function QuickAddSheet({ open, onOpenChange, category, existingCount, onCreated }: Props) {
-  const [phase,    setPhase]    = useState<Phase>("pick");
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [progress, setProgress] = useState<UploadProgress | null>(null);
+  const [phase,       setPhase]       = useState<Phase>("pick");
+  const [errorMsg,    setErrorMsg]    = useState<string | null>(null);
+  const [progress,    setProgress]    = useState<UploadProgress | null>(null);
+  const [failedFiles, setFailedFiles] = useState<File[]>([]);
 
   // Comparison state
   const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
@@ -100,6 +101,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const handleClose = useCallback(() => {
     setPhase("pick");
     setErrorMsg(null);
+    setFailedFiles([]);
     setOriginalDataUrl("");
     setCleanedDataUrl("");
     setCleanupError(null);
@@ -210,25 +212,32 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
 
     // Multiple files — save all directly, skip comparison
-    let saved = 0;
+    const succeeded: File[] = [];
+    const errored:   File[] = [];
     for (let i = 0; i < files.length; i++) {
       setProgress({ done: i, total: files.length });
       const ok = await handleFile(files[i], i);
-      if (ok && ok !== "comparing") saved++;
+      if (ok && ok !== "comparing") {
+        succeeded.push(files[i]);
+      } else {
+        errored.push(files[i]);
+      }
     }
     setProgress(null);
-    const failed = files.length - saved;
-    if (saved === 0) {
+    if (succeeded.length === 0) {
       setErrorMsg("Could not save the photos. Please try again.");
+      setFailedFiles(errored);
       setPhase("pick");
-    } else if (failed > 0) {
-      // Partial failure — keep sheet open so the user knows what happened
+    } else if (errored.length > 0) {
+      // Partial failure — keep sheet open so the user can retry just the failures
       setErrorMsg(
-        `${saved} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
-        `${failed} couldn't be added — please try again.`
+        `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+        `${errored.length} couldn't be added.`
       );
+      setFailedFiles(errored);
       setPhase("pick");
     } else {
+      setFailedFiles([]);
       handleClose();
     }
   }, [handleFile, handleClose]);
@@ -287,9 +296,24 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               className="flex flex-col p-5 gap-5 overflow-y-auto"
             >
               {errorMsg && (
-                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
-                  {errorMsg}
-                </p>
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
+                    {errorMsg}
+                  </p>
+                  {failedFiles.length > 0 && (
+                    <button
+                      onClick={() => {
+                        setErrorMsg(null);
+                        handleFiles(failedFiles);
+                      }}
+                      className="w-full py-2.5 border-2 border-black rounded-xl bg-primary font-display font-bold text-sm uppercase tracking-tight
+                                 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
+                                 active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                    >
+                      Retry {failedFiles.length} failed photo{failedFiles.length !== 1 ? "s" : ""}
+                    </button>
+                  )}
+                </div>
               )}
 
               <div className="flex gap-3">
