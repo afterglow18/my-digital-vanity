@@ -122,7 +122,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [failedThumbnails,   setFailedThumbnails]   = useState<string[]>([]);
   const [dragIndex,          setDragIndex]          = useState<number | null>(null);
   const [dragOverIndex,      setDragOverIndex]      = useState<number | null>(null);
-  const thumbRowRef = useRef<HTMLDivElement>(null);
+  const thumbRowRef    = useRef<HTMLDivElement>(null);
+  const autoScrollRef  = useRef<number | null>(null);
 
   // Comparison state
   const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
@@ -149,7 +150,36 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   const handleThumbRowPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (dragIndex === null || !thumbRowRef.current) return;
-    const children = Array.from(thumbRowRef.current.children) as HTMLElement[];
+    const container = thumbRowRef.current;
+    const containerRect = container.getBoundingClientRect();
+
+    // ── Auto-scroll when pointer is near the left or right edge ──────────────
+    const SCROLL_ZONE  = 56; // px from edge that triggers scrolling
+    const SCROLL_SPEED = 10; // px per animation frame
+
+    if (autoScrollRef.current !== null) {
+      cancelAnimationFrame(autoScrollRef.current);
+      autoScrollRef.current = null;
+    }
+
+    let delta = 0;
+    if (e.clientX < containerRect.left + SCROLL_ZONE) {
+      delta = -SCROLL_SPEED;
+    } else if (e.clientX > containerRect.right - SCROLL_ZONE) {
+      delta = SCROLL_SPEED;
+    }
+
+    if (delta !== 0) {
+      const tick = () => {
+        if (!thumbRowRef.current) return;
+        thumbRowRef.current.scrollLeft += delta;
+        autoScrollRef.current = requestAnimationFrame(tick);
+      };
+      autoScrollRef.current = requestAnimationFrame(tick);
+    }
+
+    // ── Hit-test: getBoundingClientRect() is in viewport coords, matching clientX ──
+    const children = Array.from(container.children) as HTMLElement[];
     for (let i = 0; i < children.length; i++) {
       const rect = children[i].getBoundingClientRect();
       if (e.clientX >= rect.left && e.clientX <= rect.right) {
@@ -159,7 +189,15 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
   }, [dragIndex]);
 
+  const stopAutoScroll = useCallback(() => {
+    if (autoScrollRef.current !== null) {
+      cancelAnimationFrame(autoScrollRef.current);
+      autoScrollRef.current = null;
+    }
+  }, []);
+
   const handleThumbRowPointerUp = useCallback(() => {
+    stopAutoScroll();
     if (dragIndex !== null && dragOverIndex !== null && dragIndex !== dragOverIndex) {
       setFailedFiles(prev => {
         const next = [...prev];
@@ -176,7 +214,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     }
     setDragIndex(null);
     setDragOverIndex(null);
-  }, [dragIndex, dragOverIndex]);
+  }, [dragIndex, dragOverIndex, stopAutoScroll]);
 
   const confirmClose = useCallback(() => {
     setShowAbandonConfirm(false);
