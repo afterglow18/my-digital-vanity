@@ -133,6 +133,23 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const cameraInputRef  = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  // Reset all per-session state each time the sheet opens so stale phase/URL
+  // from a previous session never blocks the compare screen from rendering.
+  useEffect(() => {
+    if (!open) return;
+    setPhase("pick");
+    setErrorMsg(null);
+    setProgress(null);
+    setFailedFiles([]);
+    setFailedThumbnails([]);
+    setOriginalDataUrl("");
+    setCleanedDataUrl("");
+    setHadSubject(false);
+    setCleanupError(null);
+    setShowAbandonConfirm(false);
+    pendingMeta.current = null;
+  }, [open]);
+
   const createItem  = useCreateClothingItem();
   const queryClient = useQueryClient();
 
@@ -425,7 +442,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
       {/* Body */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
 
           {/* ── PICK ── */}
           {phase === "pick" && (
