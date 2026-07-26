@@ -68,34 +68,48 @@ workflows:
           cp "$NATIVE_SRC/PhotoCleanupPlugin.m"     "$IOS_APP/"
           echo "Copied PhotoCleanup plugin files"
 
-          # Register both files with the Xcode project so they compile
+          # Register both files with the Xcode project so they compile.
+          # Uses only standard xcodeproj methods (no recursive_children_groups, etc.)
           ruby - << 'RUBY'
           require 'xcodeproj'
+
+          # Recursively find the deepest group whose direct files include `filename`.
+          def find_group_with_file(group, filename)
+            return group if group.files.any? { |f| f.path == filename }
+            group.groups.each do |g|
+              result = find_group_with_file(g, filename)
+              return result if result
+            end
+            nil
+          end
+
           project = Xcodeproj::Project.open('artifacts/outfit-generator/ios/App/App.xcodeproj')
           target  = project.targets.find { |t| t.name == 'App' }
-          abort "ERROR: Could not find 'App' target" unless target
+          raise "No 'App' target found in Xcode project" unless target
 
-          # Find the group that already owns AppDelegate.swift — robust regardless
-          # of how Capacitor names or nests the App source group.
-          app_group = nil
-          project.main_group.recursive_children_groups.each do |g|
-            if g.files.any? { |f| f.respond_to?(:path) && f.path == 'AppDelegate.swift' }
-              app_group = g
-              break
-            end
-          end
-          # Fallback: named 'App' directly under main group
+          # Locate the group that owns AppDelegate.swift — works regardless of
+          # how Capacitor names or nests its source groups.
+          app_group  = find_group_with_file(project.main_group, 'AppDelegate.swift')
+          # Fallback: look for the outer 'App' group by name
           app_group ||= project.main_group.find_subpath('App', false)
-          abort "ERROR: Could not locate App source group in Xcode project" unless app_group
+          raise "Could not locate App source group" unless app_group
 
-          puts "Using group: #{app_group.hierarchy_path}"
+          puts "Adding files into group: #{app_group.path}"
+
           ['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m'].each do |fname|
-            already = target.source_build_phase.files_references.any? { |r| r.respond_to?(:path) && r.path == fname }
-            next if already
-            ref = app_group.new_reference(fname)
+            # Skip if already present in the Sources build phase
+            in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
+            if in_build
+              puts "  #{fname} — already in build phase, skipping"
+              next
+            end
+            # Re-use an existing file reference or create a new one
+            existing = app_group.files.find { |f| f.path == fname }
+            ref = existing || app_group.new_reference(fname)
             target.source_build_phase.add_file_reference(ref)
-            puts "  Added #{fname} to Xcode project"
+            puts "  #{fname} — added ✓"
           end
+
           project.save
           puts 'PhotoCleanup Vision plugin injected ✓'
           RUBY
