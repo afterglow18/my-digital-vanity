@@ -61,19 +61,67 @@ workflows:
         script: |
           NATIVE_SRC="artifacts/outfit-generator/native"
           IOS_APP="artifacts/outfit-generator/ios/App/App"
-          PROJECT="artifacts/outfit-generator/ios/App/App.xcodeproj"
 
-          # Copy Swift plugin source into the iOS app target directory
+          # ── Step 1: copy the Swift implementation ────────────────────────────
           cp "$NATIVE_SRC/PhotoCleanupPlugin.swift" "$IOS_APP/"
-          cp "$NATIVE_SRC/PhotoCleanupPlugin.m"     "$IOS_APP/"
-          echo "Copied PhotoCleanup plugin files"
+          echo "Copied PhotoCleanupPlugin.swift"
 
-          # Register both files with the Xcode project so they compile.
-          # Uses only standard xcodeproj methods (no recursive_children_groups, etc.)
+          # ── Step 2: register plugin via AppDelegate.swift ────────────────────
+          # CAPBridge.register() is the public Swift API for plugin registration.
+          # This is more reliable than the ObjC CAP_PLUGIN macro, which requires
+          # a separate .m file and ObjC +load — not available in pure-Swift targets.
+          python3 - << 'PYEOF'
+import re, sys
+
+path = 'artifacts/outfit-generator/ios/App/App/AppDelegate.swift'
+try:
+    content = open(path).read()
+except FileNotFoundError:
+    print(f'ERROR: {path} not found', file=sys.stderr)
+    sys.exit(1)
+
+print('--- AppDelegate.swift (first 800 chars) ---')
+print(content[:800])
+print('---')
+
+registration = '        CAPBridge.register(pluginClass: PhotoCleanupPlugin.self, withName: "PhotoCleanup")\n'
+
+# Match the body of didFinishLaunchingWithOptions up to its "return true"
+patched, n = re.subn(
+    r'(func application\(_ application: UIApplication, didFinishLaunchingWithOptions'
+    r'[^{]*\{[^}]*)return true',
+    r'\g<1>' + registration + '        return true',
+    content,
+    count=1
+)
+
+if n == 0:
+    print('WARNING: primary pattern did not match — trying simpler pattern')
+    patched, n = re.subn(
+        r'(// Override point for customization after application launch\.\n\s+)return true',
+        r'\g<1>' + registration.lstrip() + '        return true',
+        content,
+        count=1
+    )
+
+if n == 0:
+    print('ERROR: Could not find insertion point in AppDelegate.swift', file=sys.stderr)
+    print('Full file:', file=sys.stderr)
+    print(content, file=sys.stderr)
+    sys.exit(1)
+
+open(path, 'w').write(patched)
+print('AppDelegate.swift patched — registration line added:')
+for i, line in enumerate(patched.split('\n'), 1):
+    if 'PhotoCleanup' in line or 'didFinishLaunch' in line:
+        print(f'  L{i}: {line}')
+print('Done ✓')
+PYEOF
+
+          # ── Step 3: add PhotoCleanupPlugin.swift to the Xcode project ────────
           ruby - << 'RUBY'
           require 'xcodeproj'
 
-          # Recursively find the deepest group whose direct files include `filename`.
           def find_group_with_file(group, filename)
             return group if group.files.any? { |f| f.path == filename }
             group.groups.each do |g|
@@ -85,33 +133,27 @@ workflows:
 
           project = Xcodeproj::Project.open('artifacts/outfit-generator/ios/App/App.xcodeproj')
           target  = project.targets.find { |t| t.name == 'App' }
-          raise "No 'App' target found in Xcode project" unless target
+          raise "No 'App' target found" unless target
 
-          # Locate the group that owns AppDelegate.swift — works regardless of
-          # how Capacitor names or nests its source groups.
           app_group  = find_group_with_file(project.main_group, 'AppDelegate.swift')
-          # Fallback: look for the outer 'App' group by name
           app_group ||= project.main_group.find_subpath('App', false)
-          raise "Could not locate App source group" unless app_group
+          raise "Could not find App source group" unless app_group
 
-          puts "Adding files into group: #{app_group.path}"
+          puts "Using group: #{app_group.path}"
 
-          ['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m'].each do |fname|
-            # Skip if already present in the Sources build phase
-            in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
-            if in_build
-              puts "  #{fname} — already in build phase, skipping"
-              next
-            end
-            # Re-use an existing file reference or create a new one
+          fname    = 'PhotoCleanupPlugin.swift'
+          in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
+          if in_build
+            puts "  #{fname} already in build phase"
+          else
             existing = app_group.files.find { |f| f.path == fname }
             ref = existing || app_group.new_reference(fname)
             target.source_build_phase.add_file_reference(ref)
-            puts "  #{fname} — added ✓"
+            puts "  #{fname} added ✓"
           end
 
           project.save
-          puts 'PhotoCleanup Vision plugin injected ✓'
+          puts 'xcodeproj saved ✓'
           RUBY
 
       - name: Add export compliance and privacy keys to Info.plist

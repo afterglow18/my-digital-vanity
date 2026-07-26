@@ -27,12 +27,18 @@ public class PhotoCleanupPlugin: CAPPlugin {
     // MARK: - Plugin entry point
 
     @objc func processPhoto(_ call: CAPPluginCall) {
-        guard
-            let b64   = call.getString("imageData"),
-            let data  = Data(base64Encoded: b64),
-            let input = UIImage(data: data)
-        else {
-            call.reject("processPhoto: invalid imageData")
+        guard let b64 = call.getString("imageData") else {
+            call.reject("processPhoto: missing imageData argument")
+            return
+        }
+        // Use .ignoreUnknownCharacters so minor whitespace / encoding
+        // artefacts introduced by the JS↔native bridge don't cause nil.
+        guard let data = Data(base64Encoded: b64, options: .ignoreUnknownCharacters) else {
+            call.reject("processPhoto: base64 decode failed (length \(b64.count))")
+            return
+        }
+        guard let input = UIImage(data: data) else {
+            call.reject("processPhoto: UIImage init failed (data length \(data.count))")
             return
         }
 

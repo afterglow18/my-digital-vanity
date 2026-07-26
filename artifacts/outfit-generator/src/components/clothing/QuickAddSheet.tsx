@@ -1,20 +1,21 @@
 /**
  * QuickAddSheet
  *
- * Upload flow (with photo cleanup):
+ * On native iOS — always shows comparison after photo capture:
  *
  *   pick ──(file chosen)──► cleaning ──► comparing ──► uploading ──► close
- *                                   └──(no subject / error)──► uploading
  *
- * "cleaning"  — Vision framework processes the photo on-device (~1-3 s)
- * "comparing" — user chooses Original or Cleaned before saving
+ * "cleaning"  — Vision processes the photo on-device (~1-3 s)
+ * "comparing" — user sees Original vs Cleaned side by side before saving
+ *               If Vision fails, Cleaned panel shows a graceful unavailable state
+ *               "Retake" button sends the user back to pick
  *
- * Falls back to the original save-immediately flow on web or when the
- * plugin is unavailable.
+ * On web — photos save immediately (Vision not available).
+ * Multi-file upload — photos save immediately (no comparison step).
  */
 import React, { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Check, Sparkles } from "lucide-react";
+import { X, Loader2, Check } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
@@ -39,7 +40,6 @@ interface UploadProgress { done: number; total: number; }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-/** Compress a Blob to a JPEG data URL capped at 800 px wide. */
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -58,7 +58,6 @@ async function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** Convert a base64 string (no prefix) to a data URL for display. */
 function base64ToDataUrl(b64: string): string {
   return `data:image/jpeg;base64,${b64}`;
 }
@@ -89,9 +88,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
   const [cleanedDataUrl,  setCleanedDataUrl]  = useState<string>("");
   const [hadSubject,      setHadSubject]      = useState(false);
-  // Pending file metadata for after comparison
+  const [cleanupError,    setCleanupError]    = useState<string | null>(null);
   const pendingMeta = useRef<{ countOffset: number } | null>(null);
-  const pendingCount = useRef(0);
 
   const cameraInputRef  = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
@@ -104,15 +102,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setErrorMsg(null);
     setOriginalDataUrl("");
     setCleanedDataUrl("");
+    setCleanupError(null);
     pendingMeta.current = null;
     onOpenChange(false);
   }, [onOpenChange]);
 
-  /** Save a data URL as a clothing item. */
-  const saveDataUrl = useCallback(async (
-    dataUrl: string,
-    countOffset: number,
-  ): Promise<boolean> => {
+  const saveDataUrl = useCallback(async (dataUrl: string, countOffset: number): Promise<boolean> => {
     const label    = CATEGORY_LABELS[category];
     const n        = existingCount + countOffset + 1;
     const autoName = n === 1 ? label : `${label} ${n}`;
@@ -133,14 +128,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
   /**
    * Core single-file handler.
-   * 1. Encode to PNG (normalises orientation).
-   * 2. Make a 1200px JPEG for Vision (better results than 800px).
-   * 3. On native: run PhotoCleanup plugin.
-   *    - If a subject is detected → show comparison.
-   *    - Otherwise → save original immediately.
-   * 4. On web: save original immediately.
+   * On native iOS: always transitions to "comparing" so the user can
+   * review (and choose Original or Cleaned) before anything is saved.
+   * On web: saves immediately.
    */
-  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<boolean | "comparing"> => {
+  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | boolean> => {
     let png: Blob;
     try {
       png = await encodeToPng(file);
@@ -149,45 +141,37 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       return false;
     }
 
-    // Always prepare the 800px original for storage / comparison display
     const origDataUrl = await blobToDataUrl(png);
 
     if (!isPhotoCleanupAvailable()) {
-      // Web / dev — skip Vision entirely
+      // Web / dev — skip Vision, save directly
       return saveDataUrl(origDataUrl, countOffset);
     }
 
-    // Native path: run Vision cleanup
+    // Native — run Vision then ALWAYS show comparison
+    let cleanedUrl  = origDataUrl;
+    let subjectFound = false;
+    let visionErr: string | null = null;
+
     try {
       const b64    = await blobToBase64(png, 1200);
       const result = await PhotoCleanup.processPhoto({ imageData: b64 });
-
-      console.log(
-        `[PhotoCleanup] supported:${result.supported} hadSubject:${result.hadSubject}`,
-      );
-
-      if (result.hadSubject) {
-        // Show comparison — defer save until user chooses
-        const cleanedUrl = base64ToDataUrl(result.cleanedImageData);
-        setOriginalDataUrl(origDataUrl);
-        setCleanedDataUrl(cleanedUrl);
-        setHadSubject(result.hadSubject);
-        pendingMeta.current = { countOffset };
-        setPhase("comparing");
-        return "comparing";
-      }
-
-      // No subject or enhancement-only — save original without comparison
-      // (Vision ran but the result is essentially the same as original)
-      return saveDataUrl(origDataUrl, countOffset);
-
+      cleanedUrl   = base64ToDataUrl(result.cleanedImageData);
+      subjectFound = result.hadSubject;
     } catch (err) {
-      console.warn("[PhotoCleanup] Plugin error — saving original:", err);
-      return saveDataUrl(origDataUrl, countOffset);
+      console.warn("[PhotoCleanup] Plugin error:", err);
+      visionErr = "Clean Up couldn't run on this photo.";
     }
+
+    setOriginalDataUrl(origDataUrl);
+    setCleanedDataUrl(cleanedUrl);
+    setHadSubject(subjectFound);
+    setCleanupError(visionErr);
+    pendingMeta.current = { countOffset };
+    setPhase("comparing");
+    return "comparing";
   }, [saveDataUrl]);
 
-  /** Called from PhotoCompareSheet when user picks original or cleaned. */
   const handleCompareSelect = useCallback(async (chosenDataUrl: string) => {
     const meta = pendingMeta.current;
     if (!meta) return;
@@ -198,23 +182,20 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     handleClose();
   }, [saveDataUrl, handleClose]);
 
-  const handleCompareCancel = useCallback(() => {
-    // User cancelled comparison — go back to pick
+  const handleRetake = useCallback(() => {
     setOriginalDataUrl("");
     setCleanedDataUrl("");
+    setCleanupError(null);
     pendingMeta.current = null;
     setPhase("pick");
   }, []);
 
-  /** Handle a batch of files from the file inputs. */
   const handleFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
     setErrorMsg(null);
     setPhase(isPhotoCleanupAvailable() ? "cleaning" : "uploading");
     setProgress({ done: 0, total: files.length });
-    pendingCount.current = files.length;
 
-    // Single file: may show comparison
     if (files.length === 1) {
       const result = await handleFile(files[0], 0);
       if (result === "comparing") return; // hand off to comparison UI
@@ -228,7 +209,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       return;
     }
 
-    // Multiple files: skip comparison, save all directly
+    // Multiple files — save all directly, skip comparison
     let saved = 0;
     for (let i = 0; i < files.length; i++) {
       const ok = await handleFile(files[i], i);
@@ -333,19 +314,6 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 </button>
               </div>
 
-              {/* Clean Up badge — only on native */}
-              {isPhotoCleanupAvailable() && (
-                <div
-                  className="flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 border-black"
-                  style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
-                >
-                  <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#D0909A" }} />
-                  <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
-                    <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device after you add a photo.
-                  </p>
-                </div>
-              )}
-
               <div className="border-2 border-black rounded-2xl bg-white p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
                 <p className="font-display font-bold text-sm uppercase tracking-tight mb-3 flex items-center gap-2">
                   <span>📸</span> PHOTO TIPS
@@ -377,21 +345,21 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
                 style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
               >
-                <Sparkles className="w-12 h-12 animate-pulse" style={{ color: "#D0909A" }} />
+                <span className="text-5xl animate-pulse">✨</span>
               </div>
               <div className="text-center">
                 <p className="font-display font-bold text-2xl uppercase tracking-tight">
                   Cleaning up…
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Removing background &amp; enhancing on‑device
+                  Processing your photo on‑device
                 </p>
               </div>
             </motion.div>
           )}
 
           {/* ── COMPARING ── */}
-          {phase === "comparing" && originalDataUrl && cleanedDataUrl && (
+          {phase === "comparing" && originalDataUrl && (
             <motion.div
               key="comparing"
               initial={{ opacity: 0 }}
@@ -401,10 +369,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             >
               <PhotoCompareSheet
                 originalDataUrl={originalDataUrl}
-                cleanedDataUrl={cleanedDataUrl}
+                cleanedDataUrl={cleanedDataUrl || originalDataUrl}
                 hadSubject={hadSubject}
+                cleanupError={cleanupError}
+                cancelLabel="Retake"
                 onSelect={handleCompareSelect}
-                onCancel={handleCompareCancel}
+                onCancel={handleRetake}
               />
             </motion.div>
           )}

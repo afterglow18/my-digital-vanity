@@ -11,7 +11,7 @@ import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey }
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
-import { PhotoCleanup, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
 import { PhotoCompareSheet } from "./PhotoCompareSheet";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -190,9 +190,13 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     setCleanupError(null);
     try {
       const originalDataUrl = item.imageObjectPath;
-      // Strip data-URL prefix to get raw base64 for the Vision plugin
-      const commaIdx = originalDataUrl.indexOf(",");
-      const imageData = commaIdx >= 0 ? originalDataUrl.slice(commaIdx + 1) : originalDataUrl;
+
+      // Convert the stored data URL → Blob → resize to 1200 px JPEG → raw base64.
+      // Stored images can be large PNGs (old WASM pipeline); passing them raw
+      // through the Capacitor bridge causes Data(base64Encoded:) to return nil.
+      const resp = await fetch(originalDataUrl);
+      const blob = await resp.blob();
+      const imageData = await blobToBase64(blob, 1200);
 
       const result = await PhotoCleanup.processPhoto({ imageData });
       const cleanedDataUrl = `data:image/jpeg;base64,${result.cleanedImageData}`;

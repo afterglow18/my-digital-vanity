@@ -1,19 +1,18 @@
 /**
  * PhotoCompareSheet — side-by-side Original vs Cleaned comparison.
  *
- * Shown after the Vision plugin processes a photo.  The user taps to select
- * which version to save; the chosen data URL is passed to onSelect.
- *
  * Props:
  *   originalDataUrl  — JPEG data URL of the original photo
- *   cleanedDataUrl   — JPEG data URL of the cleaned (Vision-processed) photo
+ *   cleanedDataUrl   — JPEG data URL of the processed photo (ignored when cleanupError set)
  *   hadSubject       — whether Vision found a foreground subject
- *   onSelect(dataUrl) — called with the chosen data URL
+ *   cleanupError     — when set, Cleaned panel shows a graceful error state
+ *   cancelLabel      — label for the dismiss/retake button (default "Cancel")
+ *   onSelect(url)    — called with the chosen data URL
  *   onCancel         — user dismissed without choosing
  */
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Sparkles } from "lucide-react";
+import { Check, Sparkles, RotateCcw } from "lucide-react";
 
 const ROSE      = "#E8B0B8";
 const ROSE_DARK = "#D0909A";
@@ -22,6 +21,8 @@ interface Props {
   originalDataUrl: string;
   cleanedDataUrl:  string;
   hadSubject:      boolean;
+  cleanupError?:   string | null;
+  cancelLabel?:    string;
   onSelect:        (dataUrl: string) => void;
   onCancel:        () => void;
 }
@@ -32,10 +33,13 @@ export function PhotoCompareSheet({
   originalDataUrl,
   cleanedDataUrl,
   hadSubject,
+  cleanupError,
+  cancelLabel = "Cancel",
   onSelect,
   onCancel,
 }: Props) {
-  const [chosen, setChosen] = useState<Choice>("cleaned");
+  const hasClean = !cleanupError;
+  const [chosen, setChosen] = useState<Choice>(hasClean ? "cleaned" : "original");
 
   const handleSave = () => {
     onSelect(chosen === "cleaned" ? cleanedDataUrl : originalDataUrl);
@@ -50,7 +54,7 @@ export function PhotoCompareSheet({
       className="flex flex-col h-full"
       style={{ background: "#f9f4ee" }}
     >
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────────── */}
       <div
         className="flex items-center justify-between px-4 pb-3 bg-white border-b-2 border-black flex-shrink-0"
         style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
@@ -60,9 +64,11 @@ export function PhotoCompareSheet({
             Clean Up Photo
           </h2>
           <p className="text-xs text-black/50 font-medium mt-0.5">
-            {hadSubject
-              ? "Background removed · photo enhanced"
-              : "Photo enhanced on-device"}
+            {cleanupError
+              ? "Background removal unavailable — save original"
+              : hadSubject
+                ? "Background removed · photo enhanced"
+                : "Photo enhanced on‑device"}
           </p>
         </div>
         <div
@@ -83,7 +89,11 @@ export function PhotoCompareSheet({
             <div key={id} className="flex-1 text-center">
               <span
                 className="text-[10px] font-black uppercase tracking-widest"
-                style={{ color: chosen === id ? ROSE_DARK : "#aaa" }}
+                style={{
+                  color: (!hasClean && id === "cleaned")
+                    ? "#ccc"
+                    : chosen === id ? ROSE_DARK : "#aaa",
+                }}
               >
                 {id === "original" ? "Original" : "Cleaned ✨"}
               </span>
@@ -93,43 +103,80 @@ export function PhotoCompareSheet({
 
         {/* Image cards */}
         <div className="flex gap-3 flex-1 min-h-0">
-          {(["original", "cleaned"] as Choice[]).map(id => {
-            const src    = id === "original" ? originalDataUrl : cleanedDataUrl;
-            const active = chosen === id;
-            return (
-              <button
-                key={id}
-                onClick={() => setChosen(id)}
-                className="flex-1 relative rounded-2xl overflow-hidden border-4 transition-all active:scale-[0.98]"
-                style={{
-                  borderColor: active ? ROSE_DARK : "#ddd",
-                  boxShadow:   active ? `4px 4px 0 ${ROSE_DARK}` : "none",
-                }}
+
+          {/* Original card — always selectable */}
+          <button
+            onClick={() => setChosen("original")}
+            className="flex-1 relative rounded-2xl overflow-hidden border-4 transition-all active:scale-[0.98]"
+            style={{
+              borderColor: chosen === "original" ? ROSE_DARK : "#ddd",
+              boxShadow:   chosen === "original" ? `4px 4px 0 ${ROSE_DARK}` : "none",
+            }}
+          >
+            <img
+              src={originalDataUrl}
+              alt="original"
+              className="w-full h-full object-cover"
+              draggable={false}
+            />
+            {chosen === "original" && (
+              <div
+                className="absolute bottom-2 right-2 w-7 h-7 rounded-full flex items-center justify-center border-2 border-white"
+                style={{ background: ROSE_DARK }}
               >
-                <img
-                  src={src}
-                  alt={id}
-                  className="w-full h-full object-cover"
-                  draggable={false}
-                />
-                {/* Selected checkmark */}
-                {active && (
-                  <div
-                    className="absolute bottom-2 right-2 w-7 h-7 rounded-full flex items-center justify-center border-2 border-white"
-                    style={{ background: ROSE_DARK }}
-                  >
-                    <Check className="w-4 h-4 text-white" strokeWidth={3} />
-                  </div>
-                )}
-              </button>
-            );
-          })}
+                <Check className="w-4 h-4 text-white" strokeWidth={3} />
+              </div>
+            )}
+          </button>
+
+          {/* Cleaned card — error state when cleanupError is set */}
+          {hasClean ? (
+            <button
+              onClick={() => setChosen("cleaned")}
+              className="flex-1 relative rounded-2xl overflow-hidden border-4 transition-all active:scale-[0.98]"
+              style={{
+                borderColor: chosen === "cleaned" ? ROSE_DARK : "#ddd",
+                boxShadow:   chosen === "cleaned" ? `4px 4px 0 ${ROSE_DARK}` : "none",
+              }}
+            >
+              <img
+                src={cleanedDataUrl}
+                alt="cleaned"
+                className="w-full h-full object-cover"
+                draggable={false}
+              />
+              {chosen === "cleaned" && (
+                <div
+                  className="absolute bottom-2 right-2 w-7 h-7 rounded-full flex items-center justify-center border-2 border-white"
+                  style={{ background: ROSE_DARK }}
+                >
+                  <Check className="w-4 h-4 text-white" strokeWidth={3} />
+                </div>
+              )}
+            </button>
+          ) : (
+            /* Error state — not selectable */
+            <div
+              className="flex-1 relative rounded-2xl overflow-hidden border-4 border-dashed flex flex-col items-center justify-center gap-2 p-3"
+              style={{ borderColor: "#ddd", background: "#f5f5f5" }}
+            >
+              <Sparkles className="w-8 h-8 opacity-20" />
+              <p className="text-[11px] font-bold text-black/30 uppercase tracking-wider text-center leading-tight">
+                Unavailable
+              </p>
+              <p className="text-[10px] text-black/25 text-center leading-snug">
+                Try again after updating the app
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Tap hint */}
-        <p className="text-center text-[11px] text-black/35 font-medium flex-shrink-0">
-          Tap a photo to select it
-        </p>
+        {hasClean && (
+          <p className="text-center text-[11px] text-black/35 font-medium flex-shrink-0">
+            Tap a photo to select it
+          </p>
+        )}
       </div>
 
       {/* ── CTA ─────────────────────────────────────────────────────────────── */}
@@ -143,20 +190,23 @@ export function PhotoCompareSheet({
                      text-black border-2 border-black transition-all
                      active:translate-y-0.5 active:shadow-none"
           style={{
-            background: `linear-gradient(to bottom, ${ROSE}, ${ROSE_DARK})`,
-            boxShadow:  "3px 3px 0 rgba(0,0,0,0.85)",
+            background:  `linear-gradient(to bottom, ${ROSE}, ${ROSE_DARK})`,
+            boxShadow:   "3px 3px 0 rgba(0,0,0,0.85)",
             letterSpacing: "0.05em",
           }}
         >
-          {chosen === "cleaned"
-            ? "✨ Save Cleaned Version"
-            : "Save Original"}
+          {!hasClean
+            ? "Save Photo"
+            : chosen === "cleaned"
+              ? "✨ Save Cleaned Version"
+              : "Save Original"}
         </button>
         <button
           onClick={onCancel}
-          className="text-xs font-bold text-black/40 hover:text-black/60 transition-colors text-center py-1"
+          className="flex items-center justify-center gap-1.5 text-xs font-bold text-black/40 hover:text-black/60 transition-colors text-center py-1"
         >
-          Cancel
+          <RotateCcw className="w-3.5 h-3.5" />
+          {cancelLabel}
         </button>
       </div>
     </motion.div>
