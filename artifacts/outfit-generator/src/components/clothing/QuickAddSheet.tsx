@@ -331,6 +331,18 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     const origDataUrl = await blobToDataUrl(png);
     if (bgGenRef.current !== myGen) return;
 
+    // Pre-decode the image into the browser bitmap cache while the encoding
+    // spinner is still showing. WebKit decoding a cold base64 PNG takes 1-2 s
+    // on device and leaves the compare sheet white if we switch phase first.
+    // By waiting for onload here, the <img> paints instantly when phase="preview".
+    await new Promise<void>((resolve) => {
+      const img = new Image();
+      img.onload  = () => resolve();
+      img.onerror = () => resolve(); // never block on a decode error
+      img.src = origDataUrl;
+    });
+    if (bgGenRef.current !== myGen) return;
+
     // Show original immediately — preview screen appears without waiting for removal.
     pendingMeta.current = { countOffset: 0 };
     setOriginalDataUrl(origDataUrl);
