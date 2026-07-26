@@ -3,7 +3,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import type { ClothingCategory } from "@/types/local";
-import { ImagePlus, Loader2 } from "lucide-react";
+import { ImagePlus, Loader2, Sparkles } from "lucide-react";
 import { getImageUrl } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
@@ -184,6 +184,19 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
               className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
             />
           </div>
+
+          {/* Clean Up badge — only on native */}
+          {isPhotoCleanupAvailable() && (
+            <div
+              className="flex items-center gap-2 px-3 py-2.5 mt-2 rounded-xl border-2"
+              style={{ background: "#FFF0F6", borderColor: "#E8B0B8" }}
+            >
+              <Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: "#D0909A" }} />
+              <p className="text-xs font-semibold leading-snug" style={{ color: "#9A5060" }}>
+                <span className="font-black">Clean Up Photo</span> — background removal &amp; auto-enhance run on‑device after you take a photo.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-4">
