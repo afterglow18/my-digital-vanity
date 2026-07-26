@@ -9,19 +9,6 @@
  * then is cached permanently by the browser / WKWebView cache.
  */
 import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
-// onnxruntime-web is a peer dependency shared with @imgly/background-removal.
-// The TS error below is a known package.json exports issue in ort 1.x; the
-// import still resolves and affects the same singleton used by the imgly library.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore
-import * as ort from "onnxruntime-web";
-
-// Force WASM inference into a proxy worker so the main thread stays free for
-// UI events (button taps, Cancel) while removal runs. Without this, the 2-5s
-// WASM inference blocks all JS, making every button appear unresponsive.
-// The imgly library only sets proxy=true when device="gpu"; we set it here
-// for the default WASM path so it applies on every platform.
-(ort as { env: { wasm: { proxy: boolean } } }).env.wasm.proxy = true;
 
 export type RemovalProgress =
   | { stage: "loading"; pct: number }
@@ -31,6 +18,42 @@ export type RemovalProgress =
 /** Always true — JS/WASM works on every platform. */
 export async function isBackgroundRemovalSupported(): Promise<boolean> {
   return true;
+}
+
+/**
+ * Configure ONNX Runtime Web to run inference in a proxy worker thread.
+ *
+ * THREE things are required — any one missing and the main thread blocks:
+ *
+ * 1. Object.defineProperty to lock proxy=true.
+ *    @imgly/background-removal sets ort.env.wasm.proxy = false right before
+ *    it creates each inference session (it only enables proxy for WebGPU).
+ *    A plain assignment gets overwritten. Using Object.defineProperty with a
+ *    no-op setter makes imgly's write silently ignored so the value stays true.
+ *
+ * 2. numThreads = 1.
+ *    iOS Safari has no SharedArrayBuffer, which WASM multithreading requires.
+ *    Threads > 1 causes a silent crash. Single-threaded avoids it.
+ *
+ * 3. Dynamic import() — NOT a top-level import.
+ *    Importing onnxruntime-web at module parse time triggers Vite's dependency
+ *    pre-bundling mid-session, causing a full page reload that corrupts React's
+ *    internal dispatcher. Dynamic import() defers the load to the moment
+ *    inference is first requested, after everything is stable.
+ */
+let ortConfigured = false;
+async function configureOrt(): Promise<void> {
+  if (ortConfigured) return;
+  ortConfigured = true;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore — onnxruntime-web exports mismatch in TS, works at runtime
+  const ort = await import("onnxruntime-web");
+  Object.defineProperty(ort.env.wasm, "proxy", {
+    get: () => true,
+    set: () => {},        // blocks imgly from setting it back to false
+    configurable: true,  // allows re-configuration if ever needed
+  });
+  ort.env.wasm.numThreads = 1; // iOS Safari has no SharedArrayBuffer
 }
 
 /**
@@ -48,6 +71,9 @@ export async function removeBackground(
   dataUrl: string,
   onProgress?: (p: RemovalProgress) => void,
 ): Promise<string> {
+  // Configure the proxy worker before the first inference session is created.
+  await configureOrt();
+
   onProgress?.({ stage: "loading", pct: 0 });
   const sourceBlob = await dataUrlToBlob(dataUrl);
 
