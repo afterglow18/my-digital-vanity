@@ -1,24 +1,27 @@
 /**
  * QuickAddSheet
  *
- * Flow:  pick ──(file chosen)──► uploading ──► close
+ * On native iOS — always shows comparison after photo capture:
  *
- * On all platforms — photos save immediately after selection.
- * Multi-file upload — all photos saved in sequence.
+ *   pick ──(file chosen)──► cleaning ──► comparing ──► uploading ──► close
  *
- * NOTE: Background-removal (PhotoCompareSheet / PhotoCleanupPlugin) has been
- * disabled for this release.  The library code is intact in:
- *   src/lib/photoCleanup.ts
- *   src/components/clothing/PhotoCompareSheet.tsx
- *   native/PhotoCleanupPlugin.swift / .m
+ * "cleaning"  — Vision processes the photo on-device (~1-3 s)
+ * "comparing" — user sees Original vs Cleaned side by side before saving
+ *               If Vision fails, Cleaned panel shows a graceful unavailable state
+ *               "Retake" button sends the user back to pick
+ *
+ * On web — photos save immediately (Vision not available).
+ * Multi-file upload — photos save immediately (no comparison step).
  */
 import React, { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Check, GripHorizontal } from "lucide-react";
+import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
 import { encodeToPng } from "@/lib/processImage";
+import { PhotoCleanup, blobToBase64, isPhotoCleanupAvailable } from "@/lib/photoCleanup";
+import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
 import { buildRetryStripState } from "@/lib/retryStripHelpers";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -32,7 +35,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   fragrances: "Fragrance",
 };
 
-type Phase = "pick" | "uploading";
+type Phase = "pick" | "cleaning" | "comparing" | "uploading";
 
 interface UploadProgress { done: number; total: number; }
 
@@ -121,6 +124,13 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [dragOverIndex,      setDragOverIndex]      = useState<number | null>(null);
   const thumbRowRef = useRef<HTMLDivElement>(null);
 
+  // Comparison state
+  const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
+  const [cleanedDataUrl,  setCleanedDataUrl]  = useState<string>("");
+  const [hadSubject,      setHadSubject]      = useState(false);
+  const [cleanupError,    setCleanupError]    = useState<string | null>(null);
+  const pendingMeta = useRef<{ countOffset: number } | null>(null);
+
   const [showAbandonConfirm, setShowAbandonConfirm] = useState(false);
 
   const cameraInputRef  = useRef<HTMLInputElement>(null);
@@ -174,6 +184,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setErrorMsg(null);
     setFailedFiles([]);
     setFailedThumbnails([]);
+    setOriginalDataUrl("");
+    setCleanedDataUrl("");
+    setCleanupError(null);
+    pendingMeta.current = null;
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -204,8 +218,13 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     });
   }, [category, existingCount, createItem, queryClient, onCreated]);
 
-  /** Encode one file and save it immediately. */
-  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<true | false | "quota"> => {
+  /**
+   * Core single-file handler.
+   * On native iOS: always transitions to "comparing" so the user can
+   * review (and choose Original or Cleaned) before anything is saved.
+   * On web: saves immediately.
+   */
+  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | true | false | "quota"> => {
     let png: Blob;
     try {
       png = await encodeToPng(file);
@@ -213,9 +232,66 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       console.error("[QuickAdd] PNG encoding failed:", err);
       return false;
     }
-    const dataUrl = await blobToDataUrl(png);
-    return saveDataUrl(dataUrl, countOffset);
+
+    const origDataUrl = await blobToDataUrl(png);
+
+    // Always show comparison for single-file captures on all platforms.
+    // On native iOS: Vision runs and produces a cleaned version.
+    // On web: the cleaned panel shows a friendly "not available" message.
+    let cleanedUrl   = origDataUrl;
+    let subjectFound = false;
+    let visionErr: string | null = isPhotoCleanupAvailable()
+      ? null
+      : "Clean Up is only available in the iOS app.";
+
+    if (isPhotoCleanupAvailable()) {
+      try {
+        const b64    = await blobToBase64(png, 1200);
+        const result = await PhotoCleanup.processPhoto({ imageData: b64 });
+        cleanedUrl   = base64ToDataUrl(result.cleanedImageData);
+        subjectFound = result.hadSubject;
+      } catch (err) {
+        console.warn("[PhotoCleanup] Plugin error:", err);
+        visionErr = "Clean Up couldn't run on this photo.";
+      }
+    }
+
+    setOriginalDataUrl(origDataUrl);
+    setCleanedDataUrl(cleanedUrl);
+    setHadSubject(subjectFound);
+    setCleanupError(visionErr);
+    pendingMeta.current = { countOffset };
+    setPhase("comparing");
+    return "comparing";
   }, [saveDataUrl]);
+
+  const handleCompareSelect = useCallback(async (chosenDataUrl: string) => {
+    const meta = pendingMeta.current;
+    if (!meta) return;
+    setPhase("uploading");
+    setProgress({ done: 0, total: 1 });
+    const result = await saveDataUrl(chosenDataUrl, meta.countOffset);
+    setProgress({ done: 1, total: 1 });
+    if (result === true) {
+      handleClose();
+    } else {
+      setPhase("pick");
+      setProgress(null);
+      setErrorMsg(
+        result === "quota"
+          ? "Your device storage is full — free up space and try again."
+          : "Could not save the photo. Please try again.",
+      );
+    }
+  }, [saveDataUrl, handleClose]);
+
+  const handleRetake = useCallback(() => {
+    setOriginalDataUrl("");
+    setCleanedDataUrl("");
+    setCleanupError(null);
+    pendingMeta.current = null;
+    setPhase("pick");
+  }, []);
 
   const handleFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
