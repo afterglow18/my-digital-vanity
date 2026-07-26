@@ -15,7 +15,7 @@
  */
 import React, { useRef, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Loader2, Check } from "lucide-react";
+import { X, Loader2, Check, Sparkles } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
@@ -81,6 +81,21 @@ function base64ToDataUrl(b64: string): string {
   return `data:image/jpeg;base64,${b64}`;
 }
 
+/** Returns true if the error is an IndexedDB / browser storage quota error. */
+function isQuotaError(err: unknown): boolean {
+  if (err instanceof DOMException) {
+    // Standard name check (Firefox, Chrome modern)
+    if (err.name === "QuotaExceededError") return true;
+    // Legacy numeric code (Safari, older Chrome)
+    if (err.code === 22) return true;
+  }
+  if (err instanceof Error) {
+    if (err.name === "QuotaExceededError") return true;
+    if (err.message.toLowerCase().includes("quota")) return true;
+  }
+  return false;
+}
+
 // ── Component ──────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -130,11 +145,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const saveDataUrl = useCallback(async (dataUrl: string, countOffset: number): Promise<boolean> => {
+  const saveDataUrl = useCallback(async (dataUrl: string, countOffset: number): Promise<true | false | "quota"> => {
     const label    = CATEGORY_LABELS[category];
     const n        = existingCount + countOffset + 1;
     const autoName = n === 1 ? label : `${label} ${n}`;
-    return new Promise<boolean>((resolve) => {
+    return new Promise<true | false | "quota">((resolve) => {
       createItem.mutate(
         { data: { name: autoName, category, imageObjectPath: dataUrl } },
         {
@@ -143,7 +158,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             if (onCreated) onCreated(createdItem);
             resolve(true);
           },
-          onError: () => resolve(false),
+          onError: (err) => resolve(isQuotaError(err) ? "quota" : false),
         },
       );
     });
@@ -155,7 +170,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
    * review (and choose Original or Cleaned) before anything is saved.
    * On web: saves immediately.
    */
-  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | boolean> => {
+  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | true | false | "quota"> => {
     let png: Blob;
     try {
       png = await encodeToPng(file);
@@ -200,9 +215,19 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     if (!meta) return;
     setPhase("uploading");
     setProgress({ done: 0, total: 1 });
-    await saveDataUrl(chosenDataUrl, meta.countOffset);
+    const result = await saveDataUrl(chosenDataUrl, meta.countOffset);
     setProgress({ done: 1, total: 1 });
-    handleClose();
+    if (result === true) {
+      handleClose();
+    } else {
+      setPhase("pick");
+      setProgress(null);
+      setErrorMsg(
+        result === "quota"
+          ? "Your device storage is full — free up space and try again."
+          : "Could not save the photo. Please try again.",
+      );
+    }
   }, [saveDataUrl, handleClose]);
 
   const handleRetake = useCallback(() => {
@@ -222,8 +247,12 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     if (files.length === 1) {
       const result = await handleFile(files[0], 0);
       if (result === "comparing") return; // hand off to comparison UI
-      if (!result) {
-        setErrorMsg("Could not save the photo. Please try again.");
+      if (result !== true) {
+        setErrorMsg(
+          result === "quota"
+            ? "Your device storage is full — free up space and try again."
+            : "Could not save the photo. Please try again.",
+        );
         setPhase("pick");
       } else {
         handleClose();
@@ -235,12 +264,14 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     // Multiple files — save all directly, skip comparison
     const succeeded: File[] = [];
     const errored:   File[] = [];
+    let anyQuotaError = false;
     for (let i = 0; i < files.length; i++) {
       setProgress({ done: i, total: files.length });
       const ok = await handleFile(files[i], i);
-      if (ok && ok !== "comparing") {
+      if (ok === true) {
         succeeded.push(files[i]);
       } else {
+        if (ok === "quota") anyQuotaError = true;
         errored.push(files[i]);
       }
     }
@@ -249,15 +280,22 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
       setFailedThumbnails(thumbs);
       setFailedFiles(errored);
-      setErrorMsg("Could not save the photos. Please try again.");
+      setErrorMsg(
+        anyQuotaError
+          ? "Your device storage is full — free up space and try again."
+          : "Could not save the photos. Please try again.",
+      );
       setPhase("pick");
     } else if (errored.length > 0) {
       // Partial failure — keep sheet open so the user can retry just the failures
       const thumbs = await Promise.all(errored.map((f) => fileToThumbnail(f)));
       setFailedThumbnails(thumbs);
       setErrorMsg(
-        `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
-        `${errored.length} couldn't be added.`
+        anyQuotaError
+          ? `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+            `Device storage is full — free up space to add the rest.`
+          : `${succeeded.length} of ${files.length} photo${files.length !== 1 ? "s" : ""} saved. ` +
+            `${errored.length} couldn't be added.`,
       );
       setFailedFiles(errored);
       setPhase("pick");
