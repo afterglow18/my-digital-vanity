@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Patches AppDelegate.swift to register PhotoCleanupPlugin via the public
-Swift CAPBridge API — more reliable than the ObjC CAP_PLUGIN macro,
-which requires +load and is unavailable in pure-Swift Capacitor targets.
+Patches AppDelegate.swift to register PhotoCleanupPlugin via
+CAPBridgeViewController.registerPlugin(_:) — the correct public Swift API
+in Capacitor 5+. CAPBridge.register(pluginClass:withName:) does not exist;
+CAPBridgeViewController.registerPlugin(_:) is the static method that does.
 """
 import re, sys
 
@@ -17,7 +18,12 @@ print('--- AppDelegate.swift (first 800 chars) ---')
 print(content[:800])
 print('---')
 
-registration = '        CAPBridge.register(pluginClass: PhotoCleanupPlugin.self, withName: "PhotoCleanup")\n'
+# Skip if already patched (idempotent re-runs)
+if 'PhotoCleanupPlugin' in content:
+    print('AppDelegate.swift already contains PhotoCleanupPlugin registration — skipping.')
+    sys.exit(0)
+
+registration = '        CAPBridgeViewController.registerPlugin(PhotoCleanupPlugin.self)\n'
 
 # Match the body of didFinishLaunchingWithOptions up to its "return true"
 patched, n = re.subn(
