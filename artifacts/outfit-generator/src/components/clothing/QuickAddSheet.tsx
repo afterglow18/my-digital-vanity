@@ -13,7 +13,7 @@
  * On web — photos save immediately (Vision not available).
  * Multi-file upload — photos save immediately (no comparison step).
  */
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
 import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
@@ -35,7 +35,7 @@ const CATEGORY_LABELS: Record<Category, string> = {
   fragrances: "Fragrance",
 };
 
-type Phase = "pick" | "cleaning" | "comparing" | "uploading";
+type Phase = "pick" | "encoding" | "preview" | "uploading";
 
 interface UploadProgress { done: number; total: number; }
 
@@ -127,16 +127,22 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const [hadSubject,      setHadSubject]      = useState(false);
   const [cleanupError,    setCleanupError]    = useState<string | null>(null);
   const pendingMeta = useRef<{ countOffset: number } | null>(null);
+  // Generation counter — each new photo bumps this; every async step checks it
+  // before writing state so a slow first removal never clobbers a fast second one.
+  const bgGenRef = useRef(0);
+  const [bgProcessing, setBgProcessing] = useState(false);
 
   const [showAbandonConfirm, setShowAbandonConfirm] = useState(false);
 
   const cameraInputRef  = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
-  // Reset all per-session state each time the sheet opens so stale phase/URL
-  // from a previous session never blocks the compare screen from rendering.
+  // Reset all per-session state each time the sheet opens. Also cancels any
+  // in-flight removal left over from a previous session (bgGenRef guard).
   useEffect(() => {
     if (!open) return;
+    bgGenRef.current += 1;
+    setBgProcessing(false);
     setPhase("pick");
     setErrorMsg(null);
     setProgress(null);
@@ -230,13 +236,17 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   }, [dragIndex, dragOverIndex, stopAutoScroll]);
 
   const confirmClose = useCallback(() => {
+    bgGenRef.current += 1;   // cancel any in-flight removal
+    setBgProcessing(false);  // MUST reset — close can happen mid-removal
     setShowAbandonConfirm(false);
     setPhase("pick");
     setErrorMsg(null);
+    setProgress(null);
     setFailedFiles([]);
     setFailedThumbnails([]);
     setOriginalDataUrl("");
     setCleanedDataUrl("");
+    setHadSubject(false);
     setCleanupError(null);
     pendingMeta.current = null;
     onOpenChange(false);
@@ -270,46 +280,85 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   }, [category, existingCount, createItem, queryClient, onCreated]);
 
   /**
-   * Core single-file handler.
-   * Always transitions to "comparing" on all platforms — JS/WASM background
-   * removal works in WKWebView, browsers, and Android with no native plugin.
+   * Single-file handler: switches to "encoding" immediately so the user sees a
+   * spinner right away, then shows the preview screen as soon as the original is
+   * ready. Background removal runs in the background while the user can already
+   * see and interact with the preview.
+   *
+   * Generation counter (bgGenRef) ensures that if the user picks a second photo
+   * before the first removal finishes, the stale result is silently discarded.
    */
-  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<"comparing" | true | false | "quota"> => {
+  const handleFile = useCallback(async (file: File): Promise<void> => {
+    setErrorMsg(null);
+    const myGen = ++bgGenRef.current;
+    setOriginalDataUrl("");
+    setCleanedDataUrl("");
+    setHadSubject(false);
+    setCleanupError(null);
+    setBgProcessing(false);
+    // Switch to "encoding" BEFORE any await — gives instant feedback.
+    setPhase("encoding");
+
     let png: Blob;
     try {
       png = await encodeToPng(file);
     } catch (err) {
+      if (bgGenRef.current !== myGen) return;
       console.error("[QuickAdd] PNG encoding failed:", err);
-      return false;
+      setErrorMsg("Could not read that photo. Please try again.");
+      setPhase("pick");
+      return;
     }
+    if (bgGenRef.current !== myGen) return;
 
     const origDataUrl = await blobToDataUrl(png);
+    if (bgGenRef.current !== myGen) return;
 
-    // Kick off background removal — works on every platform via JS/WASM.
-    let cleanedUrl   = origDataUrl;
-    let subjectFound = false;
-    let visionErr: string | null = null;
-
-    try {
-      cleanedUrl   = await removeBackground(origDataUrl);
-      subjectFound = true;
-    } catch (err) {
-      console.warn("[BackgroundRemoval] Failed:", err);
-      visionErr = "Clean Up couldn't run on this photo.";
-    }
-
+    // Show original immediately — preview screen appears without waiting for removal.
+    pendingMeta.current = { countOffset: 0 };
     setOriginalDataUrl(origDataUrl);
-    setCleanedDataUrl(cleanedUrl);
-    setHadSubject(subjectFound);
-    setCleanupError(visionErr);
-    pendingMeta.current = { countOffset };
-    setPhase("comparing");
-    return "comparing";
+    setPhase("preview");
+
+    // Background removal runs while the user already sees the original.
+    setBgProcessing(true);
+    try {
+      const cleanedUrl = await removeBackground(origDataUrl);
+      if (bgGenRef.current !== myGen) return;
+      setCleanedDataUrl(cleanedUrl);
+      setHadSubject(true);
+    } catch (err) {
+      if (bgGenRef.current !== myGen) return;
+      console.warn("[BackgroundRemoval] Failed:", err);
+      setCleanupError("Clean Up couldn't run on this photo.");
+    } finally {
+      if (bgGenRef.current === myGen) setBgProcessing(false);
+    }
+  }, []);
+
+  /**
+   * Direct-save handler for multi-file uploads and retries.
+   * Encodes and saves immediately — no comparison step.
+   */
+  const handleFileDirect = useCallback(async (file: File, countOffset: number): Promise<true | false | "quota"> => {
+    let png: Blob;
+    try {
+      png = await encodeToPng(file);
+    } catch {
+      return false;
+    }
+    try {
+      const dataUrl = await blobToDataUrl(png);
+      return saveDataUrl(dataUrl, countOffset);
+    } catch {
+      return false;
+    }
   }, [saveDataUrl]);
 
   const handleCompareSelect = useCallback(async (chosenDataUrl: string) => {
     const meta = pendingMeta.current;
     if (!meta) return;
+    bgGenRef.current += 1;  // cancel any still-running removal
+    setBgProcessing(false);
     setPhase("uploading");
     setProgress({ done: 0, total: 1 });
     const result = await saveDataUrl(chosenDataUrl, meta.countOffset);
@@ -317,7 +366,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     if (result === true) {
       handleClose();
     } else {
-      setPhase("pick");
+      setPhase("preview");
       setProgress(null);
       setErrorMsg(
         result === "quota"
@@ -328,8 +377,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   }, [saveDataUrl, handleClose]);
 
   const handleRetake = useCallback(() => {
+    bgGenRef.current += 1;  // cancel in-flight removal
+    setBgProcessing(false);
     setOriginalDataUrl("");
     setCleanedDataUrl("");
+    setHadSubject(false);
     setCleanupError(null);
     pendingMeta.current = null;
     setPhase("pick");
@@ -341,33 +393,22 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   ) => {
     if (files.length === 0) return;
     setErrorMsg(null);
-    setPhase(files.length === 1 ? "cleaning" : "uploading");
-    setProgress({ done: 0, total: files.length });
 
+    // Single file — show preview immediately, removal runs in background.
     if (files.length === 1) {
-      const result = await handleFile(files[0], 0);
-      if (result === "comparing") return; // hand off to comparison UI
-      if (result !== true) {
-        setErrorMsg(
-          result === "quota"
-            ? "Your device storage is full — free up space and try again."
-            : "Could not save the photo. Please try again.",
-        );
-        setPhase("pick");
-      } else {
-        handleClose();
-      }
-      setProgress(null);
+      await handleFile(files[0]);
       return;
     }
 
-    // Multiple files — save all directly, skip comparison
+    // Multiple files — encode and save directly, no comparison step.
+    setPhase("uploading");
+    setProgress({ done: 0, total: files.length });
     const succeeded: File[] = [];
     const errored:   File[] = [];
     let anyQuotaError = false;
     for (let i = 0; i < files.length; i++) {
       setProgress({ done: i, total: files.length });
-      const ok = await handleFile(files[i], i);
+      const ok = await handleFileDirect(files[i], i);
       if (ok === true) {
         succeeded.push(files[i]);
       } else {
@@ -378,7 +419,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     setProgress(null);
     const stripState = buildRetryStripState({
       succeededCount: succeeded.length,
-      failedCount: errored.length,
+      failedCount:    errored.length,
       totalAttempted: files.length,
       anyQuotaError,
     });
@@ -398,7 +439,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       setErrorMsg(stripState.errorMsg);
       setPhase("pick");
     }
-  }, [handleFile, handleClose]);
+  }, [handleFile, handleFileDirect, handleClose]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -418,8 +459,8 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       transition={{ type: "spring", damping: 28, stiffness: 240 }}
       className="fixed inset-0 z-[70] flex flex-col max-w-md mx-auto bg-[#f9f4ee]"
     >
-      {/* Header — hidden during comparing (PhotoCompareSheet has its own) */}
-      {phase !== "comparing" && (
+      {/* Header — hidden during preview (PhotoCompareSheet has its own) */}
+      {phase !== "preview" && (
         <div
           className="flex items-center justify-between px-4 pb-3 bg-white border-b-2 border-black flex-shrink-0"
           style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
@@ -442,7 +483,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
       {/* Body */}
       <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-        <AnimatePresence>
+        <AnimatePresence mode="wait" initial={false}>
 
           {/* ── PICK ── */}
           {phase === "pick" && (
@@ -451,6 +492,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
               className="flex flex-col p-5 gap-5 overflow-y-auto"
             >
               {errorMsg && (
@@ -640,48 +682,49 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             </motion.div>
           )}
 
-          {/* ── CLEANING ── */}
-          {phase === "cleaning" && (
+          {/* ── ENCODING — full-screen spinner shown immediately after photo is picked ── */}
+          {phase === "encoding" && (
             <motion.div
-              key="cleaning"
+              key="encoding"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
               className="flex-1 flex flex-col items-center justify-center gap-5 p-6"
             >
               <div
                 className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
                 style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
               >
-                <span className="text-5xl animate-pulse">✨</span>
+                <Loader2 className="w-12 h-12 animate-spin" />
               </div>
               <div className="text-center">
                 <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                  {progress && progress.total > 1
-                    ? `Cleaning ${progress.done + 1} of ${progress.total}…`
-                    : "Cleaning up…"}
+                  Processing…
                 </p>
                 <p className="text-sm text-muted-foreground mt-1">
-                  Processing your photo on‑device
+                  Getting your photo ready
                 </p>
               </div>
             </motion.div>
           )}
 
-          {/* ── COMPARING ── */}
-          {phase === "comparing" && originalDataUrl && (
+          {/* ── PREVIEW — original visible immediately; cleaned slot fills in when ready ── */}
+          {phase === "preview" && (
             <motion.div
-              key="comparing"
+              key="preview"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
               className="flex-1 flex flex-col min-h-0"
             >
               <PhotoCompareSheet
                 originalDataUrl={originalDataUrl}
-                cleanedDataUrl={cleanedDataUrl || originalDataUrl}
+                cleanedDataUrl={cleanedDataUrl}
                 hadSubject={hadSubject}
                 cleanupError={cleanupError}
+                bgProcessing={bgProcessing}
                 cancelLabel="Retake"
                 onSelect={handleCompareSelect}
                 onCancel={handleRetake}
@@ -696,6 +739,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
               className="flex-1 flex flex-col items-center justify-center gap-5 p-6"
             >
               <div className="w-28 h-28 border-4 border-black rounded-3xl bg-white

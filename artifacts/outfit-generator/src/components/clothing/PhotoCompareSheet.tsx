@@ -12,7 +12,7 @@
  */
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { Check, Sparkles, RotateCcw } from "lucide-react";
+import { Check, Sparkles, RotateCcw, Loader2 } from "lucide-react";
 
 const ROSE      = "#E8B0B8";
 const ROSE_DARK = "#D0909A";
@@ -22,6 +22,7 @@ interface Props {
   cleanedDataUrl:  string;
   hadSubject:      boolean;
   cleanupError?:   string | null;
+  bgProcessing?:   boolean;
   cancelLabel?:    string;
   onSelect:        (dataUrl: string) => void;
   onCancel:        () => void;
@@ -34,15 +35,25 @@ export function PhotoCompareSheet({
   cleanedDataUrl,
   hadSubject,
   cleanupError,
+  bgProcessing = false,
   cancelLabel = "Cancel",
   onSelect,
   onCancel,
 }: Props) {
-  const hasClean = !cleanupError;
-  const [chosen, setChosen] = useState<Choice>(hasClean ? "cleaned" : "original");
+  // Start on "original" while removal is still running; auto-switch to "cleaned"
+  // once the result arrives.
+  const [chosen, setChosen] = useState<Choice>("original");
+
+  // Auto-select cleaned version when it becomes available.
+  React.useEffect(() => {
+    if (cleanedDataUrl && !cleanupError) setChosen("cleaned");
+  }, [cleanedDataUrl, cleanupError]);
+
+  const hasClean = !!cleanedDataUrl && !cleanupError;
 
   const handleSave = () => {
-    onSelect(chosen === "cleaned" ? cleanedDataUrl : originalDataUrl);
+    // Guard: if cleaned isn't ready yet, fall back to original.
+    onSelect(chosen === "cleaned" && cleanedDataUrl ? cleanedDataUrl : originalDataUrl);
   };
 
   return (
@@ -66,9 +77,11 @@ export function PhotoCompareSheet({
           <p className="text-xs text-black/50 font-medium mt-0.5">
             {cleanupError
               ? "Background removal unavailable — save original"
-              : hadSubject
-                ? "Background removed · photo enhanced"
-                : "Photo enhanced on‑device"}
+              : bgProcessing
+                ? "Removing background…"
+                : hadSubject
+                  ? "Background removed · tap to choose"
+                  : "Photo enhanced on‑device"}
           </p>
         </div>
         <div
@@ -90,7 +103,7 @@ export function PhotoCompareSheet({
               <span
                 className="text-[10px] font-black uppercase tracking-widest"
                 style={{
-                  color: (!hasClean && id === "cleaned")
+                  color: (id === "cleaned" && (!cleanedDataUrl || !!cleanupError))
                     ? "#ccc"
                     : chosen === id ? ROSE_DARK : "#aaa",
                 }}
@@ -129,8 +142,9 @@ export function PhotoCompareSheet({
             )}
           </button>
 
-          {/* Cleaned card — error state when cleanupError is set */}
-          {hasClean ? (
+          {/* Cleaned card — three states: image ready / still processing / error */}
+          {cleanedDataUrl && !cleanupError ? (
+            /* Image available — selectable */
             <button
               onClick={() => setChosen("cleaned")}
               className="flex-1 relative rounded-2xl overflow-hidden border-4 transition-all active:scale-[0.98]"
@@ -154,6 +168,20 @@ export function PhotoCompareSheet({
                 </div>
               )}
             </button>
+          ) : bgProcessing && !cleanupError ? (
+            /* Still processing — checkerboard with spinner */
+            <div
+              className="flex-1 relative rounded-2xl border-4 border-dashed flex flex-col items-center justify-center gap-2 p-3"
+              style={{
+                borderColor: "#ddd",
+                background: "repeating-conic-gradient(#e5e7eb 0% 25%, white 0% 50%) 0 0 / 12px 12px",
+              }}
+            >
+              <Loader2 className="w-8 h-8 animate-spin" style={{ opacity: 0.4 }} />
+              <p className="text-[11px] font-bold text-black/30 uppercase tracking-wider text-center leading-tight">
+                Processing
+              </p>
+            </div>
           ) : (
             /* Error state — not selectable */
             <div
@@ -165,16 +193,19 @@ export function PhotoCompareSheet({
                 Unavailable
               </p>
               <p className="text-[10px] text-black/25 text-center leading-snug">
-                {cleanupError?.toLowerCase().includes("only available")
-                  ? "Available in the iOS app"
-                  : "Couldn't process this photo"}
+                Couldn't process this photo
               </p>
             </div>
           )}
         </div>
 
         {/* Tap hint */}
-        {hasClean && (
+        {bgProcessing && !cleanupError && (
+          <p className="text-center text-[11px] text-black/35 font-medium flex-shrink-0">
+            This will take a moment…
+          </p>
+        )}
+        {hasClean && !bgProcessing && (
           <p className="text-center text-[11px] text-black/35 font-medium flex-shrink-0">
             Tap a photo to select it
           </p>
@@ -188,20 +219,23 @@ export function PhotoCompareSheet({
       >
         <button
           onClick={handleSave}
+          disabled={bgProcessing}
           className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
                      text-black border-2 border-black transition-all
-                     active:translate-y-0.5 active:shadow-none"
+                     active:translate-y-0.5 active:shadow-none disabled:opacity-50"
           style={{
             background:  `linear-gradient(to bottom, ${ROSE}, ${ROSE_DARK})`,
             boxShadow:   "3px 3px 0 rgba(0,0,0,0.85)",
             letterSpacing: "0.05em",
           }}
         >
-          {!hasClean
-            ? "Save Photo"
-            : chosen === "cleaned"
-              ? "✨ Save Cleaned Version"
-              : "Save Original"}
+          {bgProcessing
+            ? "Processing…"
+            : !hasClean
+              ? "Save Photo"
+              : chosen === "cleaned"
+                ? "✨ Save Cleaned Version"
+                : "Save Original"}
         </button>
         <button
           onClick={onCancel}
