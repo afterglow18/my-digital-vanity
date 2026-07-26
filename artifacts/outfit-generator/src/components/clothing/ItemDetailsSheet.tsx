@@ -12,6 +12,7 @@ import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
 import { removeBackground } from "@/lib/backgroundRemoval";
+import type { RemovalProgress } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "./PhotoCompareSheet";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -120,6 +121,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   // Photo cleanup state
   const [cleanupProcessing, setCleanupProcessing] = useState(false);
   const [cleanupError, setCleanupError]           = useState<string | null>(null);
+  const [removalProgress, setRemovalProgress]     = useState<RemovalProgress | null>(null);
   const [compareData, setCompareData] = useState<{
     originalDataUrl: string;
     cleanedDataUrl: string;
@@ -135,6 +137,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     setShowDeleteConfirm(false);
     setCleanupError(null);
     setCleanupProcessing(false);
+    setRemovalProgress(null);
     setCompareData(null);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -188,16 +191,21 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     if (!item.imageObjectPath) return;
     setCleanupProcessing(true);
     setCleanupError(null);
+    setRemovalProgress({ stage: "loading", pct: 0 });
     try {
       const originalDataUrl = item.imageObjectPath;
       // JS/WASM background removal — works on all platforms, no native plugin needed.
-      const cleanedDataUrl = await removeBackground(originalDataUrl);
+      const cleanedDataUrl = await removeBackground(
+        originalDataUrl,
+        (p) => setRemovalProgress(p),
+      );
       setCompareData({ originalDataUrl, cleanedDataUrl, hadSubject: true });
     } catch (err) {
       console.error("Photo cleanup error:", err);
       setCleanupError("Couldn't clean up this photo. Please try again.");
     } finally {
       setCleanupProcessing(false);
+      setRemovalProgress(null);
     }
   };
 
@@ -292,7 +300,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
                 {cleanupProcessing ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    Processing…
+                    {removalProgress?.stage === "loading"
+                      ? `Downloading… ${removalProgress.pct}%`
+                      : "Removing background…"}
                   </>
                 ) : (
                   <>

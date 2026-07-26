@@ -24,6 +24,7 @@ import type { ClothingItem } from "@/types/local";
 import { useQueryClient } from "@tanstack/react-query";
 import { encodeToPng } from "@/lib/processImage";
 import { removeBackground } from "@/lib/backgroundRemoval";
+import type { RemovalProgress } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
 import { buildRetryStripState, buildRetryThumbMap, resolveThumbnails, reorderStrip } from "@/lib/retryStripHelpers";
 
@@ -136,6 +137,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   // before writing state so a slow first removal never clobbers a fast second one.
   const bgGenRef = useRef(0);
   const [bgProcessing, setBgProcessing] = useState(false);
+  const [removalProgress, setRemovalProgress] = useState<RemovalProgress | null>(null);
 
   // Batch-upload queue: populated when the user selects multiple photos.
   // Each entry is the next file to show in the compare screen and its name countOffset.
@@ -155,6 +157,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
     if (!open) return;
     bgGenRef.current += 1;
     setBgProcessing(false);
+    setRemovalProgress(null);
     setPhase("pick");
     setErrorMsg(null);
     setProgress(null);
@@ -286,6 +289,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const confirmClose = useCallback(() => {
     bgGenRef.current += 1;   // cancel any in-flight removal
     setBgProcessing(false);  // MUST reset — close can happen mid-removal
+    setRemovalProgress(null);
     setShowAbandonConfirm(false);
     setPhase("pick");
     setErrorMsg(null);
@@ -388,8 +392,11 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
 
     // Background removal runs while the user already sees the original.
     setBgProcessing(true);
+    setRemovalProgress({ stage: "loading", pct: 0 });
     try {
-      const cleanedUrl = await removeBackground(origDataUrl);
+      const cleanedUrl = await removeBackground(origDataUrl, (p) => {
+        if (bgGenRef.current === myGen) setRemovalProgress(p);
+      });
       if (bgGenRef.current !== myGen) return;
       setCleanedDataUrl(cleanedUrl);
       setHadSubject(true);
@@ -398,7 +405,10 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       console.warn("[BackgroundRemoval] Failed:", err);
       setCleanupError("Clean Up couldn't run on this photo.");
     } finally {
-      if (bgGenRef.current === myGen) setBgProcessing(false);
+      if (bgGenRef.current === myGen) {
+        setBgProcessing(false);
+        setRemovalProgress(null);
+      }
     }
   }, []);
 
@@ -811,6 +821,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                   hadSubject={hadSubject}
                   cleanupError={cleanupError}
                   bgProcessing={bgProcessing}
+                  removalProgress={removalProgress}
                   cancelLabel={batchTotal > 0 ? "Skip" : "Retake"}
                   batchProgress={batchTotal > 0 ? `Photo ${batchDone + 1} of ${batchTotal}` : undefined}
                   onSelect={handleCompareSelect}

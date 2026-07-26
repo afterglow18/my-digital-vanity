@@ -13,6 +13,7 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { Check, Sparkles, RotateCcw, Loader2 } from "lucide-react";
+import type { RemovalProgress } from "@/lib/backgroundRemoval";
 
 const ROSE      = "#E8B0B8";
 const ROSE_DARK = "#D0909A";
@@ -23,6 +24,8 @@ interface Props {
   hadSubject:      boolean;
   cleanupError?:   string | null;
   bgProcessing?:   boolean;
+  /** Current removal progress — used to show download % on first model load. */
+  removalProgress?: RemovalProgress | null;
   cancelLabel?:    string;
   /** Shown above the title when processing a batch, e.g. "Photo 2 of 5" */
   batchProgress?:  string;
@@ -38,6 +41,7 @@ export function PhotoCompareSheet({
   hadSubject,
   cleanupError,
   bgProcessing = false,
+  removalProgress,
   cancelLabel = "Cancel",
   batchProgress,
   onSelect,
@@ -85,12 +89,26 @@ export function PhotoCompareSheet({
           <p className="text-xs text-black/50 font-medium mt-0.5">
             {cleanupError
               ? "Background removal unavailable — save original"
-              : bgProcessing
-                ? "Removing background…"
-                : hadSubject
-                  ? "Background removed · tap to choose"
-                  : "Photo enhanced on‑device"}
+              : bgProcessing && removalProgress?.stage === "loading"
+                ? `Downloading model… ${removalProgress.pct}%`
+                : bgProcessing
+                  ? "Removing background…"
+                  : hadSubject
+                    ? "Background removed · tap to choose"
+                    : "Photo enhanced on‑device"}
           </p>
+          {/* Download progress bar — only visible during first-time model fetch */}
+          {bgProcessing && removalProgress?.stage === "loading" && (
+            <div className="mt-1.5 h-1 w-48 max-w-full rounded-full bg-black/10 overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-300"
+                style={{
+                  width: `${removalProgress.pct}%`,
+                  background: ROSE_DARK,
+                }}
+              />
+            </div>
+          )}
         </div>
         <div
           className="flex items-center gap-1 px-2.5 py-1 rounded-full border-2 border-black text-[10px] font-black uppercase tracking-widest"
@@ -177,7 +195,7 @@ export function PhotoCompareSheet({
               )}
             </button>
           ) : bgProcessing && !cleanupError ? (
-            /* Still processing — checkerboard with spinner */
+            /* Still processing — checkerboard with spinner + stage-aware label */
             <div
               className="flex-1 relative rounded-2xl border-4 border-dashed flex flex-col items-center justify-center gap-2 p-3"
               style={{
@@ -186,9 +204,23 @@ export function PhotoCompareSheet({
               }}
             >
               <Loader2 className="w-8 h-8 animate-spin" style={{ opacity: 0.4 }} />
-              <p className="text-[11px] font-bold text-black/30 uppercase tracking-wider text-center leading-tight">
-                Processing
-              </p>
+              {removalProgress?.stage === "loading" ? (
+                <>
+                  <p className="text-[11px] font-bold text-black/30 uppercase tracking-wider text-center leading-tight">
+                    {removalProgress.pct}%
+                  </p>
+                  <div className="w-16 h-1 rounded-full bg-black/10 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{ width: `${removalProgress.pct}%`, background: ROSE_DARK, opacity: 0.5 }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-[11px] font-bold text-black/30 uppercase tracking-wider text-center leading-tight">
+                  {removalProgress?.stage === "inferring" ? "Removing…" : "Processing"}
+                </p>
+              )}
             </div>
           ) : (
             /* Error state — not selectable */

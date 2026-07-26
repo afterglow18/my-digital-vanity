@@ -7,6 +7,7 @@ import { ImagePlus, Loader2, Sparkles } from "lucide-react";
 import { getImageUrl } from "@/lib/utils";
 import { AnimatePresence, motion } from "framer-motion";
 import { removeBackground } from "@/lib/backgroundRemoval";
+import type { RemovalProgress } from "@/lib/backgroundRemoval";
 import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
 
 const CATEGORIES: ClothingCategory[] = ["makeup", "skincare", "hair", "fragrances"];
@@ -73,25 +74,30 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
 
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>("idle");
   const [compareState, setCompareState] = useState<CompareState | null>(null);
+  const [removalProgress, setRemovalProgress] = useState<RemovalProgress | null>(null);
 
   const isUploading = uploadPhase !== "idle";
 
   const uploadFile = useCallback(async (file: File) => {
     setUploadPhase("cleaning");
+    setRemovalProgress({ stage: "loading", pct: 0 });
     try {
       const origDataUrl = await fileToDataUrl(file);
       try {
         // JS/WASM background removal — works on all platforms, no native plugin needed.
-        const cleanedUrl = await removeBackground(origDataUrl);
+        const cleanedUrl = await removeBackground(origDataUrl, (p) => setRemovalProgress(p));
+        setRemovalProgress(null);
         setCompareState({ originalDataUrl: origDataUrl, cleanedDataUrl: cleanedUrl, hadSubject: true });
         setUploadPhase("comparing");
       } catch (err) {
         console.warn("[BackgroundRemoval] Failed — saving original:", err);
+        setRemovalProgress(null);
         form.setValue("imageObjectPath", origDataUrl);
         setUploadPhase("idle");
       }
     } catch (err) {
       console.error("Upload error:", err);
+      setRemovalProgress(null);
       setUploadPhase("idle");
     }
   }, [form]);
@@ -131,9 +137,21 @@ export function ClothingForm({ initialData, onSubmit, isSubmitting, submitLabel 
             
             {/* Cleaning overlay */}
             {uploadPhase === "cleaning" && (
-              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2">
+              <div className="absolute inset-0 bg-black/50 flex flex-col items-center justify-center gap-2 px-6">
                 <Loader2 className="w-12 h-12 text-white animate-spin" />
-                <span className="text-white text-xs font-bold uppercase tracking-wider">Removing background…</span>
+                <span className="text-white text-xs font-bold uppercase tracking-wider text-center">
+                  {removalProgress?.stage === "loading"
+                    ? `Downloading model… ${removalProgress.pct}%`
+                    : "Removing background…"}
+                </span>
+                {removalProgress?.stage === "loading" && (
+                  <div className="w-40 h-1.5 rounded-full bg-white/20 overflow-hidden">
+                    <div
+                      className="h-full rounded-full bg-white transition-all duration-300"
+                      style={{ width: `${removalProgress.pct}%` }}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
