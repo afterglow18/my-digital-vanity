@@ -164,6 +164,31 @@ describe("buildRetryStripState — all-fail → remove some → retry remaining"
   });
 });
 
+describe("buildRetryStripState — same photos fail twice in a row", () => {
+  it("shows '0 of 2' on retry when both retried photos fail again (not '0 of 5')", () => {
+    // Initial upload: 5 photos, 3 succeed, 2 fail.
+    const firstAttempt = buildRetryStripState({
+      succeededCount: 3,
+      failedCount: 2,
+      totalAttempted: 5,
+      anyQuotaError: false,
+    });
+    expect(firstAttempt.errorMsg).toBe("3 of 5 photos saved. 2 couldn't be added.");
+    expect(firstAttempt.clearFailed).toBe(false);
+
+    // User retries the 2 failed photos; both fail again.
+    // totalAttempted is now 2 (the retry batch size), not 5.
+    const retryAttempt = buildRetryStripState({
+      succeededCount: 0,
+      failedCount: 2,
+      totalAttempted: 2,
+      anyQuotaError: false,
+    });
+    expect(retryAttempt.errorMsg).toBe("0 of 2 photos saved. Please try again.");
+    expect(retryAttempt.clearFailed).toBe(false);
+  });
+});
+
 // ─── errorMsgForRemainingFailures ────────────────────────────────────────────
 
 describe("errorMsgForRemainingFailures — remove all failures → strip clears", () => {
