@@ -1,16 +1,24 @@
 /**
- * WelcomePage — Hollywood vanity mirror splash screen.
+ * WelcomePage — three-phase splash screen.
  *
- * OFF  : deep-rose/charcoal mirror face, unlit glass bulbs around perimeter.
- * ON   : bulbs glow warm from top-centre outward (35 ms stagger), then the
- *        vanity background fades in, then the screen dissolves → onEnter().
+ * Phase 1 (hero):              Full-screen hero image + "Welcome to / MY DIGITAL VANITY"
+ *                              near the bottom. Auto-advances after 2.5 s — no interaction.
+ * Phase 2 (off):               Hollywood vanity mirror, unlit bulbs, branding near the
+ *                              bottom, "Enter Vanity ✨" button, footer links.
+ * Phase 3 (lighting → exiting): Bulbs light from top-centre outward, vanity-bg fades in,
+ *                              screen dissolves → onEnter().
+ *
+ * Session behaviour:
+ *   React state naturally provides "once per cold launch" — it resets when the
+ *   app is fully killed and restarted, but persists while the app is in the
+ *   background (Capacitor WKWebView stays alive), so background-return skips
+ *   the splash automatically.
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
 
 // ── Bulb layout ───────────────────────────────────────────────────────────────
-// Positions expressed as fractions of the container (0–1).
 function makeBulbs() {
   const list: { id: number; fx: number; fy: number }[] = [];
   let id = 0;
@@ -40,8 +48,8 @@ const LIGHT_DELAY = new Map(
     .map((b, i) => [b.id, i * STAGGER_S])
 );
 
-// Total time until last bulb finishes (used to schedule image reveal)
-const LAST_DELAY_S = (BULBS.length - 1) * STAGGER_S + 0.3; // stagger + duration
+// Total time until last bulb finishes
+const LAST_DELAY_S = (BULBS.length - 1) * STAGGER_S + 0.3;
 
 // ── Bulb component ────────────────────────────────────────────────────────────
 function Bulb({
@@ -104,11 +112,15 @@ function Bulb({
 // ── Page ──────────────────────────────────────────────────────────────────────
 interface Props { onEnter: () => void; }
 
+type Phase = "hero" | "off" | "lighting" | "revealing" | "exiting";
+
 export default function WelcomePage({ onEnter }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [cw, setCw] = useState(0);
-  const [ch, setCh] = useState(0);
-  const [phase, setPhase] = useState<"off" | "lighting" | "revealing" | "exiting">("off");
+  const [cw, setCw]     = useState(0);
+  const [ch, setCh]     = useState(0);
+  const [phase, setPhase] = useState<Phase>("hero");
+  // heroFading: true once the hero starts fading out (at t=2 s)
+  const [heroFading, setHeroFading] = useState(false);
   const calledRef = useRef(false);
 
   // Measure container on mount and resize
@@ -122,27 +134,35 @@ export default function WelcomePage({ onEnter }: Props) {
     return () => obs.disconnect();
   }, []);
 
+  // Phase 1 auto-advance: start fading hero at 2 s, switch to mirror at 2.5 s
+  useEffect(() => {
+    const fadeTimer  = setTimeout(() => setHeroFading(true), 2000);
+    const phaseTimer = setTimeout(() => setPhase("off"),    2500);
+    return () => { clearTimeout(fadeTimer); clearTimeout(phaseTimer); };
+  }, []);
+
   const finish = useCallback(() => {
     if (calledRef.current) return;
     calledRef.current = true;
     onEnter();
   }, [onEnter]);
 
+  // Phase 3: user taps "Enter Vanity"
   const handleEnter = () => {
     if (phase !== "off") return;
     setPhase("lighting");
-
-    // Reveal the bg image after the last bulb lights up
     setTimeout(() => setPhase("revealing"), LAST_DELAY_S * 1000);
-
-    // Fade out whole screen and fire onEnter
-    setTimeout(() => setPhase("exiting"), (LAST_DELAY_S + 0.85) * 1000);
-    setTimeout(finish, (LAST_DELAY_S + 1.5) * 1000);
+    setTimeout(() => setPhase("exiting"),   (LAST_DELAY_S + 0.85) * 1000);
+    setTimeout(finish,                       (LAST_DELAY_S + 1.5)  * 1000);
   };
 
-  const lit        = phase !== "off";
-  const showImage  = phase === "revealing" || phase === "exiting";
-  const bulbSize   = cw > 0 ? Math.max(14, Math.round(Math.min(cw, ch) * 0.052)) : 18;
+  const lit       = phase === "lighting" || phase === "revealing" || phase === "exiting";
+  const showImage = phase === "revealing" || phase === "exiting";
+  const bulbSize  = cw > 0 ? Math.max(14, Math.round(Math.min(cw, ch) * 0.052)) : 18;
+
+  // Branding opacity in the mirror phase:
+  //   hidden while hero overlay is on top, fades out when vanity-bg reveals
+  const mirrorBrandOpacity = phase === "hero" ? 0 : showImage ? 0 : 1;
 
   return (
     <motion.div
@@ -168,7 +188,7 @@ export default function WelcomePage({ onEnter }: Props) {
           overflow: "hidden",
         }}
       >
-        {/* Mirror face — dark rose, brightens slightly when lit */}
+        {/* Mirror face — dark rose, brightens when lit */}
         <motion.div
           style={{ position: "absolute", inset: 0, zIndex: 1 }}
           animate={{
@@ -234,11 +254,11 @@ export default function WelcomePage({ onEnter }: Props) {
           />
         ))}
 
-        {/* ── Title ── */}
+        {/* ── Mirror phase branding (bottom of screen) ── */}
         <motion.div
           style={{
             position: "absolute",
-            top: "36%",
+            bottom: "23%",
             left: 0,
             right: 0,
             zIndex: 10,
@@ -246,11 +266,24 @@ export default function WelcomePage({ onEnter }: Props) {
             pointerEvents: "none",
             padding: "0 48px",
           }}
-          animate={{
-            opacity: showImage ? 0 : 1,
-          }}
+          animate={{ opacity: mirrorBrandOpacity }}
           transition={{ duration: 0.5 }}
         >
+          {/* "Welcome to" label */}
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.26em",
+              textTransform: "uppercase" as const,
+              color: lit ? "rgba(255,230,180,0.65)" : "rgba(255,180,200,0.3)",
+              marginBottom: 8,
+              transition: "color 0.9s ease",
+            }}
+          >
+            Welcome to
+          </div>
+          {/* App name */}
           <div
             style={{
               fontFamily: "var(--font-display, serif)",
@@ -258,7 +291,7 @@ export default function WelcomePage({ onEnter }: Props) {
               fontSize: "clamp(30px, 9vw, 44px)",
               letterSpacing: "-0.02em",
               lineHeight: 1.1,
-              color: lit ? "#fff8ee" : "rgba(255,210,225,0.45)",
+              color: lit ? "#fff8ee" : "rgba(255,210,225,0.5)",
               textShadow: lit
                 ? "0 0 28px rgba(255,210,100,0.55), 0 2px 10px rgba(0,0,0,0.7)"
                 : "none",
@@ -269,26 +302,13 @@ export default function WelcomePage({ onEnter }: Props) {
             <br />
             VANITY
           </div>
-          <div
-            style={{
-              marginTop: 10,
-              fontSize: 12,
-              fontWeight: 500,
-              letterSpacing: "0.22em",
-              textTransform: "uppercase" as const,
-              color: lit ? "rgba(255,230,180,0.6)" : "rgba(255,180,200,0.25)",
-              transition: "color 0.9s ease",
-            }}
-          >
-            your beauty collection
-          </div>
         </motion.div>
 
         {/* ── "Enter Vanity" button ── */}
         <motion.div
           style={{
             position: "absolute",
-            bottom: "13%",
+            bottom: "9%",
             left: 0,
             right: 0,
             display: "flex",
@@ -324,10 +344,94 @@ export default function WelcomePage({ onEnter }: Props) {
             Enter Vanity ✨
           </button>
         </motion.div>
+
+        {/* ── Hero overlay (Phase 1) ─────────────────────────────────────────
+            Sits above everything in the container (z-index 60).
+            Fades out starting at t=2 s, phase switches to "off" at t=2.5 s.
+            After fading, pointer-events are disabled so the button is tappable. */}
+        <motion.div
+          animate={{ opacity: heroFading ? 0 : 1 }}
+          transition={{ duration: 0.5, ease: "easeInOut" }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 60,
+            pointerEvents: phase === "hero" ? "auto" : "none",
+          }}
+        >
+          {/* Hero image */}
+          <img
+            src="/hero-splash.jpg"
+            alt=""
+            draggable={false}
+            style={{
+              position: "absolute",
+              inset: 0,
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              userSelect: "none",
+              pointerEvents: "none",
+            }}
+          />
+
+          {/* Dark gradient over the lower portion for readability */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "linear-gradient(to top, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.42) 32%, transparent 62%)",
+              pointerEvents: "none",
+            }}
+          />
+
+          {/* Hero branding — near the bottom, above the gradient */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: "23%",
+              left: 0,
+              right: 0,
+              textAlign: "center",
+              padding: "0 48px",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 600,
+                letterSpacing: "0.26em",
+                textTransform: "uppercase" as const,
+                color: "rgba(255,255,255,0.72)",
+                marginBottom: 8,
+              }}
+            >
+              Welcome to
+            </div>
+            <div
+              style={{
+                fontFamily: "var(--font-display, serif)",
+                fontWeight: 900,
+                fontSize: "clamp(30px, 9vw, 44px)",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.1,
+                color: "#fff",
+                textShadow: "0 2px 16px rgba(0,0,0,0.6)",
+              }}
+            >
+              MY DIGITAL
+              <br />
+              VANITY
+            </div>
+          </div>
+        </motion.div>
       </div>
 
-      {/* ── Footer links ── */}
-      <div
+      {/* ── Footer links — visible only in mirror phase ── */}
+      <motion.div
+        animate={{ opacity: phase === "off" ? 1 : 0 }}
+        transition={{ duration: 0.4 }}
         style={{
           position: "fixed",
           bottom: "calc(env(safe-area-inset-bottom) + 10px)",
@@ -338,6 +442,7 @@ export default function WelcomePage({ onEnter }: Props) {
           alignItems: "center",
           gap: 4,
           zIndex: 210,
+          pointerEvents: phase === "off" ? "auto" : "none",
         }}
       >
         <a
@@ -356,7 +461,7 @@ export default function WelcomePage({ onEnter }: Props) {
         >
           Support
         </a>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }
