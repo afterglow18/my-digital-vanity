@@ -25,6 +25,8 @@ export interface ClothingItem {
   notes: string | null;
   isFavorite: boolean;
   timesWorn: number;
+  /** "YYYY-MM-DD" local date string, null if never logged */
+  lastUsedDate: string | null;
   createdAt: string;
   updatedAt: string;
 }

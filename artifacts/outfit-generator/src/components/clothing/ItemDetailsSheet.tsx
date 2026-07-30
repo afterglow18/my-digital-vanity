@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check, Calendar } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
@@ -20,6 +20,18 @@ import { PhotoCompareSheet } from "./PhotoCompareSheet";
 const SEASON_OPTIONS   = ["", "Spring", "Summer", "Fall", "Winter", "All Season"];
 const OCCASION_OPTIONS = ["", "Casual", "Work", "Formal", "Sport", "Special Event"];
 const CATEGORY_OPTIONS = ["makeup", "skincare", "hair", "fragrances"];
+
+/** Returns today's date as "YYYY-MM-DD" in local time — no Date parsing pitfalls. */
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Formats a "YYYY-MM-DD" string as "M/D/YY" for display. */
+function formatLastUsed(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return `${m}/${d}/${String(y).slice(2)}`;
+}
 
 function Field({
   label, value, onChange, placeholder, type = "text",
@@ -135,18 +147,29 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     hadSubject: boolean;
   } | null>(null);
 
+  // Usage tracking state
+  // timesUsedInput: local editable string for the Times Used field
+  const [timesUsedInput, setTimesUsedInput] = useState("0");
+  // prevLastUsedDate: captures item.lastUsedDate before a "log today" action so Undo can restore it.
+  // undefined = no pending undo; null = prev was null (never used); string = prev date
+  const [prevLastUsedDate, setPrevLastUsedDate] = useState<string | null | undefined>(undefined);
+
   const updateItem  = useUpdateClothingItem();
   const deleteItem  = useDeleteClothingItem();
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (item) setForm(toForm(item));
+    if (item) {
+      setForm(toForm(item));
+      setTimesUsedInput(String(item.timesWorn ?? 0));
+    }
     setLocalImageUrl(null);
     setShowDeleteConfirm(false);
     setCleanupError(null);
     setCleanupProcessing(false);
     setRemovalProgress(null);
     setCompareData(null);
+    setPrevLastUsedDate(undefined);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!item || !form) return null;
@@ -157,6 +180,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
   // Cleaned images are stored as PNG; originals are JPEG. Disable the button once cleaned.
   const alreadyCleaned = (localImageUrl ?? item.imageObjectPath ?? "").startsWith("data:image/png");
+
+  // Compare lastUsedDate against today at render time — no timers needed.
+  const loggedToday = (item.lastUsedDate ?? null) === todayStr();
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
@@ -242,6 +268,33 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
     );
   };
 
+  /** Log usage for today: increment timesWorn, set lastUsedDate to today. */
+  const handleLogUsage = () => {
+    // Capture prev value before mutation so Undo can restore it.
+    setPrevLastUsedDate(item.lastUsedDate ?? null);
+    const newCount = (item.timesWorn ?? 0) + 1;
+    setTimesUsedInput(String(newCount));
+    updateItem.mutate(
+      { id: item.id, data: { lastUsedDate: todayStr(), timesWorn: newCount } },
+      { onSuccess: invalidate },
+    );
+  };
+
+  /** Undo today's log: decrement timesWorn (min 0), restore previous lastUsedDate. */
+  const handleUndoUsage = () => {
+    const newCount = Math.max(0, (item.timesWorn ?? 0) - 1);
+    setTimesUsedInput(String(newCount));
+    updateItem.mutate(
+      { id: item.id, data: { lastUsedDate: prevLastUsedDate ?? null, timesWorn: newCount } },
+      {
+        onSuccess: () => {
+          invalidate();
+          setPrevLastUsedDate(undefined);
+        },
+      },
+    );
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: "100%" }}
@@ -291,7 +344,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
 
       {/* Photo */}
       {item.imageObjectPath && (
-        <div className="flex-shrink-0 border-b-2 border-black">
+        <div className="flex-shrink-0">
           <div
             className="w-full h-52"
             style={{
@@ -305,45 +358,76 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
               className="w-full h-full object-contain"
             />
           </div>
-
-          {/* Clean Up Photo button — all platforms via JS/WASM */}
-          {item.imageObjectPath && (
-            <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
-              <button
-                onClick={handleCleanUpPhoto}
-                disabled={cleanupProcessing || alreadyCleaned}
-                className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
-                           font-bold uppercase border-2 border-black bg-white
-                           shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                           active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
-                           transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {cleanupProcessing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {removalProgress?.stage === "loading"
-                      ? `Downloading… ${removalProgress.pct}%`
-                      : "Removing background…"}
-                  </>
-                ) : alreadyCleaned ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    Background Removed
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Clean Up Photo
-                  </>
-                )}
-              </button>
-              {cleanupError && (
-                <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
-              )}
-            </div>
-          )}
         </div>
       )}
+
+      {/* Action buttons bar — always shown (Clean Up Photo + Using This Today) */}
+      <div className={`flex-shrink-0 border-b-2 border-black px-4 py-2 bg-white flex flex-col gap-1.5${item.imageObjectPath ? " border-t-2 border-black/10" : ""}`}>
+        {/* Clean Up Photo — only when a photo exists */}
+        {item.imageObjectPath && (
+          <button
+            onClick={handleCleanUpPhoto}
+            disabled={cleanupProcessing || alreadyCleaned}
+            className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                       font-bold uppercase border-2 border-black bg-white
+                       shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                       active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                       transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {cleanupProcessing ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                {removalProgress?.stage === "loading"
+                  ? `Downloading… ${removalProgress.pct}%`
+                  : "Removing background…"}
+              </>
+            ) : alreadyCleaned ? (
+              <>
+                <Check className="w-4 h-4" />
+                Background Removed
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4" />
+                Clean Up Photo
+              </>
+            )}
+          </button>
+        )}
+
+        {/* Using This Today / Logged ✓ · Undo */}
+        {loggedToday ? (
+          <button
+            onClick={handleUndoUsage}
+            disabled={updateItem.isPending}
+            className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                       font-bold uppercase border-2 border-black bg-emerald-400 text-black
+                       shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                       active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                       transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Check className="w-4 h-4" />
+            Logged ✓ · Undo
+          </button>
+        ) : (
+          <button
+            onClick={handleLogUsage}
+            disabled={updateItem.isPending}
+            className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                       font-bold uppercase border-2 border-black bg-white
+                       shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                       active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                       transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Calendar className="w-4 h-4" />
+            Using This Today
+          </button>
+        )}
+
+        {cleanupError && (
+          <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
+        )}
+      </div>
 
       {/* PhotoCompareSheet overlay */}
       <AnimatePresence>
@@ -401,17 +485,41 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
         <div className="grid grid-cols-2 gap-3">
           <SelectField label="Category" value={form.category}
                        onChange={patch("category") as (v: string) => void} options={CATEGORY_OPTIONS} />
-          <div className="flex flex-col gap-1 opacity-50 pointer-events-none">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Times Worn</span>
-            <div className="border-2 border-black/20 rounded-lg px-3 py-2 text-sm font-medium bg-white/50">
-              {item.timesWorn ?? 0}
-            </div>
+
+          {/* Times Used — editable; saves on blur */}
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Times Used</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="0"
+              value={timesUsedInput}
+              onChange={(e) => setTimesUsedInput(e.target.value)}
+              onBlur={() => {
+                const parsed = Math.max(0, parseInt(timesUsedInput, 10) || 0);
+                setTimesUsedInput(String(parsed));
+                if (parsed !== (item.timesWorn ?? 0)) {
+                  updateItem.mutate(
+                    { id: item.id, data: { timesWorn: parsed } },
+                    { onSuccess: invalidate },
+                  );
+                }
+              }}
+              className="w-full border-2 border-black rounded-lg px-3 py-2 text-sm font-medium
+                         bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+            />
+            {item.lastUsedDate && (
+              <span className="text-[10px] text-black/45 font-medium mt-0.5">
+                Last used: {formatLastUsed(item.lastUsedDate)}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       {/* Footer */}
-      <div className="sticky bottom-0 px-4 py-4 bg-white border-t-2 border-black flex-shrink-0 flex flex-col gap-2">
+      <div className="sticky bottom-0 px-4 py-4 bg-white border-t-2 border-black flex-shrink-0 flex flex-col gap-2"
+           style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
         <AnimatePresence>
           {dirty && (
             <motion.button

@@ -99,6 +99,7 @@ export async function dbCreateClothing(data: CreateClothingData): Promise<Clothi
     notes: data.notes ?? null,
     isFavorite: data.isFavorite ?? false,
     timesWorn: 0,
+    lastUsedDate: null,
     createdAt: now,
     updatedAt: now,
   };
