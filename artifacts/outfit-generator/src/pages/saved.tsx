@@ -437,7 +437,7 @@ export default function SavedPage() {
                       onClick={() => handleUndoUsage(outfit)}
                       disabled={undoOutfitUsage.isPending}
                       className="w-full py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px]
-                                 font-bold uppercase border-2 border-black bg-emerald-400 text-black
+                                  font-bold uppercase border-2 border-black bg-[#E8B0B8] text-black
                                  shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
                                  active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
                                  transition-all disabled:opacity-50 disabled:cursor-not-allowed"
