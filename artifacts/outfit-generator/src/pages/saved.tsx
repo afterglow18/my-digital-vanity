@@ -443,7 +443,7 @@ export default function SavedPage() {
                                  transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Check className="w-3.5 h-3.5" />
-                      Logged ✓ · Undo
+                      Logged · Undo
                     </button>
                   ) : (
                     <button
