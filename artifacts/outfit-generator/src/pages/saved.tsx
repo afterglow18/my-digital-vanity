@@ -5,10 +5,12 @@ import {
   useRenameOutfit,
   useAddItemToOutfit,
   useRemoveItemFromOutfit,
+  useLogOutfitUsage,
+  useUndoOutfitUsage,
   getListOutfitsQueryKey,
 } from "@/hooks/useLocalOutfits";
-import type { ClothingItem } from "@/types/local";
-import { Trash2, Bookmark, Plus, Pencil, Check, X } from "lucide-react";
+import type { ClothingItem, SavedOutfit } from "@/types/local";
+import { Trash2, Bookmark, Plus, Pencil, Check, X, Calendar } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { getImageUrl } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -17,6 +19,18 @@ import { UpgradeSheet } from "@/components/paywall/UpgradeSheet";
 import { FREE_OUTFIT_LIMIT } from "@/types/local";
 import { WardrobePickerSheet } from "@/components/clothing/WardrobePickerSheet";
 import { ItemDetailsSheet } from "@/components/clothing/ItemDetailsSheet";
+
+/** Returns today's date as "YYYY-MM-DD" in local time. */
+function todayStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Formats a "YYYY-MM-DD" string as "M/D/YY" — parsed from parts to avoid UTC offset issues. */
+function formatLastUsed(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return `${m}/${d}/${String(y).slice(2)}`;
+}
 
 const SLOT_ORDER = ["makeup", "skincare", "hair", "fragrances"] as const;
 type SlotKey = (typeof SLOT_ORDER)[number];
@@ -65,6 +79,8 @@ export default function SavedPage() {
   const renameOutfit = useRenameOutfit();
   const removeItemFromOutfit = useRemoveItemFromOutfit();
   const addItemToOutfit = useAddItemToOutfit();
+  const logOutfitUsage = useLogOutfitUsage();
+  const undoOutfitUsage = useUndoOutfitUsage();
   const queryClient = useQueryClient();
   const { tier } = useEntitlements();
   const [showUpgrade, setShowUpgrade] = useState(false);
@@ -76,6 +92,9 @@ export default function SavedPage() {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const [editingNotesId, setEditingNotesId] = useState<string | null>(null);
   const [notesValue, setNotesValue] = useState("");
+  // prevLastUsedDates: per-outfit undo state.
+  // undefined = no pending undo; null = prev was null (never logged); string = prev date
+  const [prevLastUsedDates, setPrevLastUsedDates] = useState<Record<string, string | null | undefined>>({});
   const notesInputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -122,6 +141,21 @@ export default function SavedPage() {
   const isFree = tier === "free";
   const outfitCount = outfits?.length ?? 0;
   const atLimit = isFree && outfitCount >= FREE_OUTFIT_LIMIT;
+
+  const handleLogUsage = (outfit: SavedOutfit) => {
+    setPrevLastUsedDates((prev) => ({ ...prev, [outfit.id]: outfit.lastUsedDate ?? null }));
+    logOutfitUsage.mutate({ id: outfit.id, itemIds: outfit.items.map((i) => i.id) });
+  };
+
+  const handleUndoUsage = (outfit: SavedOutfit) => {
+    const prev = prevLastUsedDates[outfit.id];
+    undoOutfitUsage.mutate({
+      id: outfit.id,
+      prevLastUsedDate: prev !== undefined ? prev : null,
+      itemIds: outfit.items.map((i) => i.id),
+    });
+    setPrevLastUsedDates((prev) => { const n = { ...prev }; delete n[outfit.id]; return n; });
+  };
 
   const handleDelete = (id: string) => {
     deleteOutfit.mutate(
@@ -221,6 +255,7 @@ export default function SavedPage() {
 
             const knownIds = new Set(Object.values(bySlot).map((i) => i?.id));
             const extras = (outfit.items ?? []).filter((i) => !knownIds.has(i.id));
+            const loggedToday = (outfit.lastUsedDate ?? null) === todayStr();
 
             return (
               <motion.div
@@ -386,10 +421,44 @@ export default function SavedPage() {
                 </div>
 
                 {/* Footer */}
-                <div className="px-3 pb-3">
-                  <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
-                    {outfit.items?.length ?? 0} product{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
-                  </span>
+                <div className="px-3 pb-3 pt-2 border-t border-black/10 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
+                      {outfit.items?.length ?? 0} product{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
+                    </span>
+                    {!loggedToday && outfit.lastUsedDate && (
+                      <span className="text-[10px] text-black/45 font-medium">
+                        Last used: {formatLastUsed(outfit.lastUsedDate)}
+                      </span>
+                    )}
+                  </div>
+                  {loggedToday ? (
+                    <button
+                      onClick={() => handleUndoUsage(outfit)}
+                      disabled={undoOutfitUsage.isPending}
+                      className="w-full py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px]
+                                 font-bold uppercase border-2 border-black bg-emerald-400 text-black
+                                 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                                 active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                                 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      Logged ✓ · Undo
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleLogUsage(outfit)}
+                      disabled={logOutfitUsage.isPending}
+                      className="w-full py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px]
+                                 font-bold uppercase border-2 border-black bg-white text-black
+                                 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                                 active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                                 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Calendar className="w-3.5 h-3.5" />
+                      Using This Today
+                    </button>
+                  )}
                 </div>
               </motion.div>
             );

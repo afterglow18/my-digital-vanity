@@ -11,7 +11,10 @@ import {
   dbDeleteOutfit,
   dbAddItemToOutfit,
   dbRemoveItemFromOutfit,
+  dbLogOutfitUsage,
+  dbUndoOutfitUsage,
 } from '@/lib/db';
+import { getListClothingQueryKey } from '@/hooks/useLocalWardrobe';
 import type { SavedOutfit } from '@/types/local';
 
 // ── Query key ─────────────────────────────────────────────────────────────────
@@ -90,6 +93,37 @@ export function useRemoveItemFromOutfit() {
     mutationFn: ({ id, itemId }) => dbRemoveItemFromOutfit(id, itemId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
+    },
+  });
+}
+
+// ── Log outfit usage (Using This Today) ───────────────────────────────────────
+
+export function useLogOutfitUsage() {
+  const qc = useQueryClient();
+  return useMutation<void, Error, { id: string; itemIds: string[] }>({
+    mutationFn: ({ id, itemIds }) => dbLogOutfitUsage(id, itemIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
+      qc.invalidateQueries({ queryKey: getListClothingQueryKey() });
+    },
+  });
+}
+
+// ── Undo outfit usage ─────────────────────────────────────────────────────────
+
+export function useUndoOutfitUsage() {
+  const qc = useQueryClient();
+  return useMutation<
+    void,
+    Error,
+    { id: string; prevLastUsedDate: string | null; itemIds: string[] }
+  >({
+    mutationFn: ({ id, prevLastUsedDate, itemIds }) =>
+      dbUndoOutfitUsage(id, prevLastUsedDate, itemIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
+      qc.invalidateQueries({ queryKey: getListClothingQueryKey() });
     },
   });
 }

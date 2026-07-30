@@ -33,6 +33,8 @@ export interface SavedOutfit {
   id: string;
   name: string;
   notes: string | null;
+  /** "YYYY-MM-DD" local date string, null if never logged */
+  lastUsedDate: string | null;
   itemIds: string[];
   items: ClothingItem[];
   createdAt: string;

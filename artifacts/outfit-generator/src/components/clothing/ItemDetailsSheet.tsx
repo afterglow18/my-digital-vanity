@@ -117,6 +117,7 @@ function isDirty(form: FormState, item: ClothingItem): boolean {
 export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetProps) {
   const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [timesUsedInput, setTimesUsedInput] = useState("0");
 
   // Local image URL — starts from item, updates immediately when user picks a cleaned version
   const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
@@ -140,7 +141,10 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    if (item) setForm(toForm(item));
+    if (item) {
+      setForm(toForm(item));
+      setTimesUsedInput(String(item.timesWorn ?? 0));
+    }
     setLocalImageUrl(null);
     setShowDeleteConfirm(false);
     setCleanupError(null);
@@ -401,11 +405,27 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
         <div className="grid grid-cols-2 gap-3">
           <SelectField label="Category" value={form.category}
                        onChange={patch("category") as (v: string) => void} options={CATEGORY_OPTIONS} />
-          <div className="flex flex-col gap-1 opacity-50 pointer-events-none">
-            <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Times Worn</span>
-            <div className="border-2 border-black/20 rounded-lg px-3 py-2 text-sm font-medium bg-white/50">
-              {item.timesWorn ?? 0}
-            </div>
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Times Used</span>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="0"
+              value={timesUsedInput}
+              onChange={(e) => setTimesUsedInput(e.target.value)}
+              onBlur={() => {
+                const parsed = Math.max(0, parseInt(timesUsedInput, 10) || 0);
+                setTimesUsedInput(String(parsed));
+                if (parsed !== (item.timesWorn ?? 0)) {
+                  updateItem.mutate(
+                    { id: item.id, data: { timesWorn: parsed } },
+                    { onSuccess: invalidate },
+                  );
+                }
+              }}
+              className="w-full border-2 border-black rounded-lg px-3 py-2 text-sm font-medium
+                         bg-white focus:outline-none focus:ring-2 focus:ring-primary"
+            />
           </div>
         </div>
       </div>

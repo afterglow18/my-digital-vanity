@@ -193,7 +193,7 @@ export async function dbCreateOutfit(name: string, itemIds: string[]): Promise<S
   const now = new Date().toISOString();
   const outfitId = crypto.randomUUID();
 
-  const row: OutfitRow = { id: outfitId, name, notes: null, itemIds, createdAt: now };
+  const row: OutfitRow = { id: outfitId, name, notes: null, lastUsedDate: null, itemIds, createdAt: now };
   await db.put('outfits', row);
 
   const tx = db.transaction('outfit_items', 'readwrite');
@@ -214,12 +214,62 @@ export async function dbCreateOutfit(name: string, itemIds: string[]): Promise<S
 
 export async function dbUpdateOutfit(
   id: string,
-  data: { name?: string; notes?: string | null },
+  data: { name?: string; notes?: string | null; lastUsedDate?: string | null },
 ): Promise<void> {
   const db = await getDB();
   const existing = await db.get('outfits', id);
   if (!existing) return;
   await db.put('outfits', { ...existing, ...data });
+}
+
+/** Returns today's date as "YYYY-MM-DD" in local time. */
+function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * Log an outfit as used today:
+ * - Sets outfit.lastUsedDate to today's local date.
+ * - Increments timesWorn by 1 on every item in the group.
+ */
+export async function dbLogOutfitUsage(id: string, itemIds: string[]): Promise<void> {
+  const db = await getDB();
+  const row = await db.get('outfits', id);
+  if (row) await db.put('outfits', { ...row, lastUsedDate: localToday() });
+  const now = new Date().toISOString();
+  await Promise.all(
+    itemIds.map(async (itemId) => {
+      const item = await db.get('clothing', itemId);
+      if (item) {
+        await db.put('clothing', { ...item, timesWorn: (item.timesWorn ?? 0) + 1, updatedAt: now });
+      }
+    }),
+  );
+}
+
+/**
+ * Undo today's outfit log:
+ * - Restores outfit.lastUsedDate to prevLastUsedDate.
+ * - Decrements timesWorn by 1 (floor 0) on every item in the group.
+ */
+export async function dbUndoOutfitUsage(
+  id: string,
+  prevLastUsedDate: string | null,
+  itemIds: string[],
+): Promise<void> {
+  const db = await getDB();
+  const row = await db.get('outfits', id);
+  if (row) await db.put('outfits', { ...row, lastUsedDate: prevLastUsedDate });
+  const now = new Date().toISOString();
+  await Promise.all(
+    itemIds.map(async (itemId) => {
+      const item = await db.get('clothing', itemId);
+      if (item) {
+        await db.put('clothing', { ...item, timesWorn: Math.max(0, (item.timesWorn ?? 0) - 1), updatedAt: now });
+      }
+    }),
+  );
 }
 
 export async function dbDeleteOutfit(id: string): Promise<void> {
