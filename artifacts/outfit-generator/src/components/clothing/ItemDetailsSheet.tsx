@@ -21,11 +21,6 @@ const SEASON_OPTIONS   = ["", "Spring", "Summer", "Fall", "Winter", "All Season"
 const OCCASION_OPTIONS = ["", "Casual", "Work", "Formal", "Sport", "Special Event"];
 const CATEGORY_OPTIONS = ["makeup", "skincare", "hair", "fragrances"];
 
-function todayStr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 function formatLastUsed(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
   return `${m}/${d}/${String(y).slice(2)}`;
@@ -442,7 +437,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
           <div className="flex items-center justify-between border-t border-black/10 pt-3">
             <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Last used</span>
             <span className="text-sm font-semibold text-black/60">
-              {item.lastUsedDate === todayStr() ? "Today" : formatLastUsed(item.lastUsedDate)}
+              {formatLastUsed(item.lastUsedDate)}
             </span>
           </div>
         )}

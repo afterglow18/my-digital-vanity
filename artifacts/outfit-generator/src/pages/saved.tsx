@@ -428,7 +428,7 @@ export default function SavedPage() {
                     </span>
                     {outfit.lastUsedDate && (
                       <span className="text-[10px] text-black/45 font-medium">
-                        Last used: {loggedToday ? "Today" : formatLastUsed(outfit.lastUsedDate)}
+                        Last used: {formatLastUsed(outfit.lastUsedDate)}
                       </span>
                     )}
                   </div>
