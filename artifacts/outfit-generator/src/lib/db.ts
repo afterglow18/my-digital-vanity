@@ -74,10 +74,12 @@ function getDB(): Promise<IDBPDatabase<VanitySchema>> {
 export async function dbListClothing(category?: string): Promise<ClothingItem[]> {
   const db = await getDB();
   if (category) {
-    const items = await db.getAllFromIndex('clothing', 'by-category', category);
+    const items = (await db.getAllFromIndex('clothing', 'by-category', category))
+      .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
     return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
-  const items = await db.getAll('clothing');
+  const items = (await db.getAll('clothing'))
+    .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
   return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -99,6 +101,7 @@ export async function dbCreateClothing(data: CreateClothingData): Promise<Clothi
     notes: data.notes ?? null,
     isFavorite: data.isFavorite ?? false,
     timesWorn: 0,
+    lastUsedDate: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -177,7 +180,8 @@ async function hydrateOutfit(
   ois.sort((a, b) => a.position - b.position);
   const items = (
     await Promise.all(ois.map((oi) => db.get('clothing', oi.clothingItemId)))
-  ).filter((i): i is ClothingItem => i != null);
+  ).filter((i): i is ClothingItem => i != null)
+    .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
   return { ...row, items };
 }
 
@@ -231,7 +235,7 @@ function localToday(): string {
 /**
  * Log an outfit as used today:
  * - Sets outfit.lastUsedDate to today's local date.
- * - Increments timesWorn by 1 on every item in the group.
+ * - Increments timesWorn and sets lastUsedDate on every item in the group.
  */
 export async function dbLogOutfitUsage(id: string, itemIds: string[]): Promise<void> {
   const db = await getDB();
@@ -242,7 +246,12 @@ export async function dbLogOutfitUsage(id: string, itemIds: string[]): Promise<v
     itemIds.map(async (itemId) => {
       const item = await db.get('clothing', itemId);
       if (item) {
-        await db.put('clothing', { ...item, timesWorn: (item.timesWorn ?? 0) + 1, updatedAt: now });
+        await db.put('clothing', {
+          ...item,
+          timesWorn: (item.timesWorn ?? 0) + 1,
+          lastUsedDate: localToday(),
+          updatedAt: now,
+        });
       }
     }),
   );
@@ -252,6 +261,8 @@ export async function dbLogOutfitUsage(id: string, itemIds: string[]): Promise<v
  * Undo today's outfit log:
  * - Restores outfit.lastUsedDate to prevLastUsedDate.
  * - Decrements timesWorn by 1 (floor 0) on every item in the group.
+ * - Restores each item's latest remaining usage date when other saved groups
+ *   also contain that item.
  */
 export async function dbUndoOutfitUsage(
   id: string,
@@ -261,12 +272,24 @@ export async function dbUndoOutfitUsage(
   const db = await getDB();
   const row = await db.get('outfits', id);
   if (row) await db.put('outfits', { ...row, lastUsedDate: prevLastUsedDate });
+  const allOutfits = await db.getAll('outfits');
   const now = new Date().toISOString();
   await Promise.all(
     itemIds.map(async (itemId) => {
       const item = await db.get('clothing', itemId);
       if (item) {
-        await db.put('clothing', { ...item, timesWorn: Math.max(0, (item.timesWorn ?? 0) - 1), updatedAt: now });
+        const remainingDates = allOutfits
+          .filter((outfit) => outfit.id !== id && outfit.itemIds?.includes(itemId))
+          .map((outfit) => outfit.lastUsedDate)
+          .filter((date): date is string => Boolean(date));
+        if (prevLastUsedDate) remainingDates.push(prevLastUsedDate);
+        const latestRemainingDate = remainingDates.sort().pop() ?? null;
+        await db.put('clothing', {
+          ...item,
+          timesWorn: Math.max(0, (item.timesWorn ?? 0) - 1),
+          lastUsedDate: latestRemainingDate,
+          updatedAt: now,
+        });
       }
     }),
   );
