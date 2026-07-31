@@ -426,9 +426,9 @@ export default function SavedPage() {
                     <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
                       {outfit.items?.length ?? 0} product{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
                     </span>
-                    {outfit.lastUsedDate && !loggedToday && (
+                    {outfit.lastUsedDate && (
                       <span className="text-[10px] text-black/45 font-medium">
-                        Last used: {formatLastUsed(outfit.lastUsedDate)}
+                        Last used: {loggedToday ? "Today" : formatLastUsed(outfit.lastUsedDate)}
                       </span>
                     )}
                   </div>

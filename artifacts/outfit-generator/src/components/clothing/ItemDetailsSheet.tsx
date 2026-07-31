@@ -438,10 +438,12 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
             />
           </div>
         </div>
-        {item.lastUsedDate && item.lastUsedDate !== todayStr() && (
+        {item.lastUsedDate && (
           <div className="flex items-center justify-between border-t border-black/10 pt-3">
             <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Last used</span>
-            <span className="text-sm font-semibold text-black/60">{formatLastUsed(item.lastUsedDate)}</span>
+            <span className="text-sm font-semibold text-black/60">
+              {item.lastUsedDate === todayStr() ? "Today" : formatLastUsed(item.lastUsedDate)}
+            </span>
           </div>
         )}
       </div>
