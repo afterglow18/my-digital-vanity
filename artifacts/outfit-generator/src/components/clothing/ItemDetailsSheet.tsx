@@ -28,7 +28,7 @@ function todayStr(): string {
 
 function formatLastUsed(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return `${m}/${String(d).padStart(2, "0")}/${String(y).slice(2)}`;
+  return `${m}/${d}/${String(y).slice(2)}`;
 }
 
 function Field({

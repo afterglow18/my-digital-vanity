@@ -29,7 +29,7 @@ function todayStr(): string {
 /** Formats a "YYYY-MM-DD" string as "M/D/YY" — parsed from parts to avoid UTC offset issues. */
 function formatLastUsed(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return `${m}/${String(d).padStart(2, "0")}/${String(y).slice(2)}`;
+  return `${m}/${d}/${String(y).slice(2)}`;
 }
 
 const SLOT_ORDER = ["makeup", "skincare", "hair", "fragrances"] as const;
