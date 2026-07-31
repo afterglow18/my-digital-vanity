@@ -29,7 +29,7 @@ function todayStr(): string {
 /** Formats a "YYYY-MM-DD" string as "M/D/YY" — parsed from parts to avoid UTC offset issues. */
 function formatLastUsed(dateStr: string): string {
   const [y, m, d] = dateStr.split("-").map(Number);
-  return `${m}/${d}/${String(y).slice(2)}`;
+  return `${m}/${String(d).padStart(2, "0")}/${String(y).slice(2)}`;
 }
 
 const SLOT_ORDER = ["makeup", "skincare", "hair", "fragrances"] as const;
@@ -426,11 +426,11 @@ export default function SavedPage() {
                     <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
                       {outfit.items?.length ?? 0} product{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
                     </span>
-                    <span className="text-[10px] text-black/45 font-medium">
-                      Last used: {outfit.lastUsedDate
-                        ? loggedToday ? "Today" : formatLastUsed(outfit.lastUsedDate)
-                        : "Never"}
-                    </span>
+                    {outfit.lastUsedDate && !loggedToday && (
+                      <span className="text-[10px] text-black/45 font-medium">
+                        Last used: {formatLastUsed(outfit.lastUsedDate)}
+                      </span>
+                    )}
                   </div>
                   {loggedToday ? (
                     <button
