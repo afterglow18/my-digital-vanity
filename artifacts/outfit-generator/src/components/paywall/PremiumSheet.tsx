@@ -9,7 +9,7 @@ import React, { useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { X, Loader2, RefreshCw } from "lucide-react";
 import { useRCOfferings } from "@/hooks/useRCOfferings";
-import { restorePurchases } from "@/lib/revenuecat";
+import { restoreAndCheck } from "@/lib/revenuecat";
 import type { PurchaseProduct } from "@/lib/entitlements";
 import type { PurchaseResult } from "@/hooks/useEntitlements";
 
@@ -55,7 +55,7 @@ const PLAN_META: PlanMeta[] = [
     bullets: [{ text: "Cancel anytime" }, { text: "Billed monthly" }],
   },
   {
-    id: "annual", label: "YEARLY", period: "/year",
+    id: "yearly", label: "YEARLY", period: "/year",
     bullets: [{ text: "Save 17%", accent: true }, { text: "Billed yearly" }],
   },
   {
@@ -76,13 +76,13 @@ export function PremiumSheet({ onClose }: Props) {
   const activePrice = priceFor(plan);
   const activeCta =
     plan === "monthly"  ? `START MONTHLY – ${activePrice}` :
-    plan === "annual"   ? `START YEARLY – ${activePrice}`  :
+    plan === "yearly"   ? `START YEARLY – ${activePrice}`  :
                           `UNLOCK FOREVER – ${activePrice}`;
 
   const handleRestore = useCallback(async () => {
     if (restoreStatus === "pending") return;
     setRestoreStatus("pending");
-    const tier = await restorePurchases();
+    const tier = await restoreAndCheck();
     setRestoreStatus(tier ? "done" : "none");
     if (tier) setTimeout(onClose, 800);
   }, [restoreStatus, onClose]);

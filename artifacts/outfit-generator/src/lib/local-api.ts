@@ -1,39 +1,29 @@
 /**
- * local-api.ts — drop-in replacement for @workspace/api-client-react.
- *
- * All hooks share the same call signatures as the generated API client so
- * pages only need one import-line change.  Under the hood, queryFns read
- * from localStorage via db.ts and images are managed via imageStorage.ts.
+ * local-api.ts — hooks backed by the local IndexedDB/db.ts layer.
+ * Keeps the same external API shape so components need minimal changes.
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ClothingItem, SavedOutfit } from "@/types/local";
 import {
-  type ClothingItem,
-  type Outfit,
-  getClothingItem,
-  listClothingItems,
-  createClothingItem,
-  updateClothingItem,
-  deleteClothingItem,
-  getWardrobeStats,
-  listOutfits,
-  createOutfit,
-  updateOutfit,
-  deleteOutfit,
-  addItemToOutfit,
-  removeItemFromOutfit,
-  generateOutfitItems,
+  dbListClothing,
+  dbCreateClothing,
+  dbUpdateClothing,
+  dbDeleteClothing,
+  dbGetWardrobeStats,
+  dbListOutfits,
+  dbCreateOutfit,
+  dbUpdateOutfit,
+  dbDeleteOutfit,
+  dbAddItemToOutfit,
+  dbRemoveItemFromOutfit,
 } from "./db";
-import { deleteImage } from "./imageStorage";
 
-// Re-export types so pages can import them from here
-export type { ClothingItem, Outfit };
+// Re-export types
+export type { ClothingItem };
+export type Outfit = SavedOutfit;
 
-// Compatibility type aliases (used in some components)
-export type ClothingItemUpdateCategory = string;
-export type ListClothingCategory = string;
-
-// ── Query key factories ────────────────────────────────────────────────────────
+// ── Query key factories ───────────────────────────────────────────────────────
 
 export function getListClothingQueryKey(params?: { category?: string }): unknown[] {
   return params?.category ? ["clothing", params.category] : ["clothing"];
@@ -43,11 +33,7 @@ export function getListOutfitsQueryKey(): unknown[] {
   return ["outfits"];
 }
 
-export function getGetClothingItemQueryKey(id: number): unknown[] {
-  return ["clothing", "item", id];
-}
-
-// ── Clothing hooks ─────────────────────────────────────────────────────────────
+// ── Clothing hooks ────────────────────────────────────────────────────────────
 
 export function useListClothing(
   params?: { category?: string },
@@ -56,19 +42,15 @@ export function useListClothing(
   const queryKey = options?.query?.queryKey ?? getListClothingQueryKey(params);
   return useQuery({
     queryKey,
-    queryFn: () => listClothingItems(params?.category),
+    queryFn: () => dbListClothing(params?.category),
     enabled: options?.query?.enabled ?? true,
   });
 }
 
-export function useGetClothingItem(
-  id: number,
-  options?: { query?: { queryKey?: unknown[]; enabled?: boolean } },
-) {
+export function useGetWardrobeStats() {
   return useQuery({
-    queryKey: options?.query?.queryKey ?? getGetClothingItemQueryKey(id),
-    queryFn: () => getClothingItem(id),
-    enabled: options?.query?.enabled ?? true,
+    queryKey: ["stats"],
+    queryFn: () => dbGetWardrobeStats(),
   });
 }
 
@@ -79,7 +61,7 @@ export function useCreateClothingItem() {
       data,
     }: {
       data: Partial<ClothingItem> & { name: string; category: string };
-    }) => createClothingItem(data),
+    }) => dbCreateClothing(data as Parameters<typeof dbCreateClothing>[0]),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
       queryClient.invalidateQueries({ queryKey: ["stats"] });
@@ -90,11 +72,10 @@ export function useCreateClothingItem() {
 export function useUpdateClothingItem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: Partial<ClothingItem> }) =>
-      updateClothingItem(id, data),
-    onSuccess: (_result, { id }) => {
+    mutationFn: async ({ id, data }: { id: string; data: Partial<ClothingItem> }) =>
+      dbUpdateClothing(id, data),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetClothingItemQueryKey(id) });
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
     },
   });
@@ -103,11 +84,7 @@ export function useUpdateClothingItem() {
 export function useDeleteClothingItem() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id }: { id: number }) => {
-      const item = getClothingItem(id);
-      if (item?.imageObjectPath) await deleteImage(item.imageObjectPath);
-      deleteClothingItem(id);
-    },
+    mutationFn: async ({ id }: { id: string }) => dbDeleteClothing(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
@@ -116,14 +93,7 @@ export function useDeleteClothingItem() {
   });
 }
 
-export function useGetWardrobeStats() {
-  return useQuery({
-    queryKey: ["stats"],
-    queryFn: () => getWardrobeStats(),
-  });
-}
-
-// ── Outfit hooks ───────────────────────────────────────────────────────────────
+// ── Outfit hooks ──────────────────────────────────────────────────────────────
 
 export function useListOutfits(
   _query?: unknown,
@@ -131,7 +101,7 @@ export function useListOutfits(
 ) {
   return useQuery({
     queryKey: getListOutfitsQueryKey(),
-    queryFn: () => listOutfits(),
+    queryFn: () => dbListOutfits(),
     enabled: options?.query?.enabled ?? true,
   });
 }
@@ -139,8 +109,8 @@ export function useListOutfits(
 export function useSaveOutfit() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ data }: { data: { name: string; itemIds: number[] } }) =>
-      createOutfit(data.name, data.itemIds),
+    mutationFn: async ({ data }: { data: { name: string; itemIds: string[] } }) =>
+      dbCreateOutfit(data.name, data.itemIds),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
     },
@@ -150,9 +120,7 @@ export function useSaveOutfit() {
 export function useDeleteOutfit() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id }: { id: number }) => {
-      deleteOutfit(id);
-    },
+    mutationFn: async ({ id }: { id: string }) => dbDeleteOutfit(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
     },
@@ -166,9 +134,9 @@ export function useRenameOutfit() {
       id,
       data,
     }: {
-      id: number;
+      id: string;
       data: { name?: string; notes?: string | null; lastWornDate?: string | null };
-    }) => updateOutfit(id, data),
+    }) => dbUpdateOutfit(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
     },
@@ -178,8 +146,8 @@ export function useRenameOutfit() {
 export function useAddItemToOutfit() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, itemId }: { id: number; itemId: number }) =>
-      addItemToOutfit(id, itemId),
+    mutationFn: async ({ id, itemId }: { id: string; itemId: string }) =>
+      dbAddItemToOutfit(id, itemId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
     },
@@ -189,26 +157,10 @@ export function useAddItemToOutfit() {
 export function useRemoveItemFromOutfit() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, itemId }: { id: number; itemId: number }) =>
-      removeItemFromOutfit(id, itemId),
+    mutationFn: async ({ id, itemId }: { id: string; itemId: string }) =>
+      dbRemoveItemFromOutfit(id, itemId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-    },
-  });
-}
-
-// ── Generate outfit (local random pick per category) ──────────────────────────
-
-export function useGenerateOutfit() {
-  return useMutation({
-    mutationFn: async ({
-      data,
-    }: {
-      data: { excludeCategories: string[] };
-    }): Promise<{ items: ClothingItem[] }> => {
-      // Small delay so the slot-machine animation has time to spin
-      await new Promise((r) => setTimeout(r, 600));
-      return { items: generateOutfitItems(data.excludeCategories) };
     },
   });
 }

@@ -10,9 +10,10 @@
 import React, { useRef, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { Download, Upload, RefreshCw, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
-import { useEntitlements, setGlobalTier, syncTierFromRC, getCurrentTier } from "@/hooks/useEntitlements";
-import { restorePurchases } from "@/lib/revenuecat";
-import { exportBackup, importBackup, type ImportResult } from "@/lib/backup";
+import { useEntitlements, setGlobalTier, syncTierFromRevenueCat } from "@/hooks/useEntitlements";
+import { restoreAndCheck } from "@/lib/revenuecat";
+import { exportBackup, importBackup } from "@/lib/backup";
+type ImportResult = Awaited<ReturnType<typeof importBackup>>;
 import { useQueryClient } from "@tanstack/react-query";
 import { getListClothingQueryKey, getListOutfitsQueryKey } from "@/lib/local-api";
 import { UpgradeSheet } from "@/components/paywall/UpgradeSheet";
@@ -54,7 +55,7 @@ export default function AccountPage() {
       queryClient.invalidateQueries({ queryKey: ["stats"] });
       setImportStatus({
         kind: "ok",
-        msg: `Restored ${result.itemCount} items and ${result.outfitCount} outfits.`,
+        msg: `Restore complete.`,
       });
     } catch (err) {
       setImportStatus({ kind: "err", msg: err instanceof Error ? err.message : "Import failed." });
@@ -66,11 +67,11 @@ export default function AccountPage() {
     setRestoreStatus({ kind: "loading" });
     try {
       // restorePurchases() tells StoreKit to sync, then reads from RevenueCat.
-      // syncTierFromRC() re-reads after the restore to set the tier authoritatively
+      // syncTierFromRevenueCat() re-reads after the restore to set the tier authoritatively
       // (handles "unlock" vs "premium" correctly, and downgrades to free if nothing active).
-      await restorePurchases();
-      await syncTierFromRC();
-      const restoredTier = getCurrentTier();
+      const active = await restoreAndCheck();
+      await syncTierFromRevenueCat();
+      const restoredTier = active ? "unlock" : "free";
       if (restoredTier !== "free") {
         setRestoreStatus({ kind: "ok", msg: "Subscription restored! ✨" });
       } else {

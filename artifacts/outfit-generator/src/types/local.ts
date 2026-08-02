@@ -1,19 +1,19 @@
 /**
- * Shared local-first type definitions used across all six modules.
- *
- * ClothingCategory is intentionally `string` here because each module
- * has its own category vocabulary (tops/handbags/shoes/jewelry/vanity/suitcase).
- * Module-specific pages narrow the type locally where needed.
+ * Local-first type definitions — replaces all @workspace/api-client-react types.
+ * All IDs are UUID strings (no server-side serial integers).
  */
 
-export type ClothingCategory = string;
+export type ClothingCategory = 'makeup' | 'skincare' | 'hair' | 'fragrances';
+/** Kept as alias so existing components that import ClothingItemUpdateCategory still work. */
 export type ClothingItemUpdateCategory = ClothingCategory;
+/** Kept as alias for useListClothing params. */
 export type ListClothingCategory = ClothingCategory;
 
 export interface ClothingItem {
   id: string;
   name: string;
   category: ClothingCategory;
+  /** Data URL (both web and native) */
   imageObjectPath: string | null;
   color: string | null;
   brand: string | null;
@@ -25,6 +25,20 @@ export interface ClothingItem {
   notes: string | null;
   isFavorite: boolean;
   timesWorn: number;
+  /** "YYYY-MM-DD" local date string, null if never used */
+  lastUsedDate: string | null;
+  /** Color/object labels extracted from the photo (web canvas or iOS Vision) */
+  visionLabels: string[];
+  /** Text detected inside the photo (iOS Vision VNRecognizeTextRequest) */
+  visionText: string[];
+  /**
+   * Version of the vision analysis stored on this item.
+   * 0 = unanalyzed
+   * 1 = iOS Vision (VNClassifyImage + VNRecognizeText)
+   * 4 = web canvas color extraction (current algorithm)
+   * 5 = web analyzed, no labels found — do NOT retry
+   */
+  visionVersion: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -33,6 +47,8 @@ export interface SavedOutfit {
   id: string;
   name: string;
   notes: string | null;
+  /** "YYYY-MM-DD" local date string, null if never logged */
+  lastUsedDate: string | null;
   itemIds: string[];
   items: ClothingItem[];
   createdAt: string;
@@ -62,7 +78,7 @@ export type CreateClothingData = {
 
 export type UpdateClothingData = Partial<Omit<ClothingItem, 'id' | 'createdAt' | 'updatedAt'>>;
 
-// ── Entitlements ──────────────────────────────────────────────────────────────
+// ── Entitlements ───────────────────────────────────────────────────────────────
 
 export type Tier = 'free' | 'unlock' | 'premium';
 
@@ -81,12 +97,19 @@ export const TIER_CAPS: Record<Tier, TierCapabilities> = {
   premium: { maxItems: null,             maxOutfits: null,              mannequin: true  },
 };
 
-export type PurchaseProduct = 'monthly' | 'annual' | 'yearly' | 'lifetime' | 'premium';
+export type PurchaseProduct = 'monthly' | 'yearly' | 'lifetime' | 'premium';
 
-export const PRODUCT_PRICES: Record<string, string> = {
+export const PRODUCT_PRICES: Record<PurchaseProduct, string> = {
   monthly:  '$1.99',
-  annual:   '$19.99',
   yearly:   '$19.99',
   lifetime: '$9.99',
   premium:  '$9.99',
+};
+
+/** Which tier a purchase unlocks */
+export const PRODUCT_TIER: Record<PurchaseProduct, Tier> = {
+  monthly:  'unlock',
+  yearly:   'unlock',
+  lifetime: 'unlock',
+  premium:  'premium',
 };

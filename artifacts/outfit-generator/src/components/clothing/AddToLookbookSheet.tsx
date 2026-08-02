@@ -12,7 +12,8 @@ import {
   useAddItemToOutfit,
   useRemoveItemFromOutfit,
   getListOutfitsQueryKey,
-  ClothingItem,
+  type ClothingItem,
+  type Outfit,
 } from '@/lib/local-api';
 import { useQueryClient } from '@tanstack/react-query';
 import { getImageUrl } from '@/lib/utils';
@@ -28,7 +29,7 @@ export function AddToLookbookSheet({ item, onClose }: Props) {
   const removeItem = useRemoveItemFromOutfit();
   const queryClient = useQueryClient();
 
-  const handleToggle = (outfitId: number, alreadyIn: boolean) => {
+  const handleToggle = (outfitId: string, alreadyIn: boolean) => {
     if (alreadyIn) {
       removeItem.mutate(
         { id: outfitId, itemId: item.id },
@@ -83,8 +84,8 @@ export function AddToLookbookSheet({ item, onClose }: Props) {
             </p>
           </div>
         ) : (
-          outfits.map((outfit) => {
-            const alreadyIn = (outfit.items ?? []).some((i) => i.id === item.id);
+          outfits.map((outfit: Outfit) => {
+            const alreadyIn = (outfit.items ?? []).some((i: ClothingItem) => i.id === item.id);
             // Show up to 3 thumbnails
             const thumbItems = (outfit.items ?? []).slice(0, 3);
 
@@ -105,7 +106,7 @@ export function AddToLookbookSheet({ item, onClose }: Props) {
                       <span className="text-[8px] font-bold text-black/20 uppercase">Empty</span>
                     </div>
                   ) : (
-                    thumbItems.map((ti) => (
+                    thumbItems.map((ti: ClothingItem) => (
                       <div
                         key={ti.id}
                         className="w-12 h-12 border border-black/20 rounded overflow-hidden"

@@ -1,17 +1,17 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { getCachedImageUrl } from "./imageStorage";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
 /**
- * Returns a displayable URL for a clothing item's image.
- * Reads from the in-memory URL cache populated at upload time (web) or
- * app startup (native iOS via warmImageUrls).
- * Returns null if the filename is empty or not yet warmed.
+ * Resolve an image path to a displayable URL.
+ *
+ * Local-first storage always uses data URLs directly, so this is
+ * effectively an identity function for data URLs. Null/undefined → null.
  */
-export function getImageUrl(filename: string | null | undefined): string | null {
-  return getCachedImageUrl(filename);
+export function getImageUrl(path: string | null | undefined): string | null {
+  if (!path) return null;
+  return path; // Data URLs are already display-ready
 }

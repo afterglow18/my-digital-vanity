@@ -10,15 +10,16 @@
  *   ready    — packages available, prices populated from the store
  */
 import { useState, useEffect, useCallback } from "react";
-import { fetchRCPackages, purchaseRCPackage, type RCPackage } from "@/lib/revenuecat";
-import { syncTierFromRC, type PurchaseResult } from "@/hooks/useEntitlements";
+import { fetchPackages, purchaseRCPackage, type RCPackage } from "@/lib/revenuecat";
+import { syncTierFromRevenueCat, type PurchaseResult } from "@/hooks/useEntitlements";
 import type { PurchaseProduct } from "@/lib/entitlements";
 
 /** Fallback display prices shown only if the store hasn't returned yet. */
 const FALLBACK_PRICES: Record<PurchaseProduct, string> = {
   monthly:  "$1.99",
-  annual:   "$19.99",
+  yearly:   "$19.99",
   lifetime: "$9.99",
+  premium:  "$9.99",
 };
 
 export interface RCOfferingsState {
@@ -46,7 +47,7 @@ export function useRCOfferings(): RCOfferingsState {
     setLoading(true);
     setError(null);
 
-    fetchRCPackages()
+    fetchPackages()
       .then((pkgs) => {
         if (cancelled) return;
         setPackages(pkgs);
@@ -77,9 +78,9 @@ export function useRCOfferings(): RCOfferingsState {
     async (product: PurchaseProduct): Promise<PurchaseResult> => {
       const found = packages.find((p) => p.product === product);
       if (!found) return "unavailable";
-      const result = await purchaseRCPackage(found.pkg);
-      if (result === "success") await syncTierFromRC();
-      return result;
+      await purchaseRCPackage(found.pkg);
+      await syncTierFromRevenueCat();
+      return "success" as PurchaseResult;
     },
     [packages],
   );

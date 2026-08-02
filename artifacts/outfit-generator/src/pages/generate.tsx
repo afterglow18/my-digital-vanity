@@ -8,9 +8,11 @@ import React, {
 } from "react";
 import {
   useListClothing, getListClothingQueryKey,
-  useGenerateOutfit, useSaveOutfit, getListOutfitsQueryKey,
-  ClothingItem,
-} from "@/lib/local-api";
+} from "@/hooks/useLocalWardrobe";
+import {
+  useSaveOutfit, getListOutfitsQueryKey,
+} from "@/hooks/useLocalOutfits";
+import type { ClothingItem } from "@/types/local";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ClosetRow, ClosetRowHandle } from "@/components/ClosetRow";
@@ -26,14 +28,13 @@ const LM = {
   doorL: 0.207,
   doorR: 0.801,
   rows: [
-    { btnCY: 0.311, boxY: 0.319 },
-    { btnCY: 0.498, boxY: 0.506 },
-    { btnCY: 0.690, boxY: 0.714 },
+    { sectionTop: 0.241, shelfY: 0.344, btnCY: 0.220 },
+    { sectionTop: 0.390, shelfY: 0.502, btnCY: 0.367 },
+    { sectionTop: 0.547, shelfY: 0.663, btnCY: 0.525 },
+    { sectionTop: 0.702, shelfY: 0.805, btnCY: 0.683 },
   ],
-  barY:    0.858,
-  barBot:  1.0,
-  saveBtnL: 0.350,
-  saveBtnR: 0.650,
+  barY:   0.848,
+  barBot: 1.000,
 } as const;
 
 interface ImgRect {
@@ -66,9 +67,7 @@ const pW = (ir: ImgRect, f: number) => ir.width  * f;
 const pX = (ir: ImgRect, f: number) => ir.left   + ir.width  * f;
 const pY = (ir: ImgRect, f: number) => ir.top    + ir.height * f;
 
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-type RowKey = "tops" | "bottoms" | "shoes";
+type RowKey = "makeup" | "skincare" | "hair" | "fragrances";
 type Phase  = "idle" | "spinning" | "result";
 
 const ROWS: { key: RowKey }[] = [
@@ -96,7 +95,6 @@ export default function GeneratePage() {
   const [centred,    setCentred]    = useState<Partial<Record<RowKey, ClothingItem>>>({});
   const [isSaveOpen, setIsSaveOpen] = useState(false);
   const [saveName,   setSaveName]   = useState("");
-  const [savedToast, setSavedToast] = useState<string | null>(null);
 
   const rowDataRef = useRef<Record<RowKey, ClothingItem[]>>({
     makeup: [], skincare: [], hair: [], fragrances: [],
@@ -197,11 +195,8 @@ export default function GeneratePage() {
       { data: { name: saveName.trim(), itemIds } },
       { onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-        const name = saveName.trim();
         setIsSaveOpen(false);
         setSaveName("");
-        setSavedToast(name);
-        setTimeout(() => setSavedToast(null), 2500);
       }},
     );
   };
@@ -267,35 +262,6 @@ export default function GeneratePage() {
         </div>
       )}
 
-      {/* ── "Matchmaker" subtitle under baked-in title ── */}
-      {ready && (
-        <div
-          aria-hidden="true"
-          style={{
-            position: "absolute",
-            top:  pY(ir, 0.225),
-            left: ir.left,
-            width: ir.width,
-            textAlign: "center",
-            zIndex: 5,
-            pointerEvents: "none",
-            userSelect: "none",
-          }}
-        >
-          <span style={{
-            fontFamily: "var(--font-display)",
-            fontWeight: 700,
-            fontSize: Math.max(13, ir.width * 0.052),
-            letterSpacing: "0.18em",
-            textTransform: "uppercase",
-            color: "#3d1a00",
-            opacity: 0.92,
-          }}>
-            Matchmaker
-          </span>
-        </div>
-      )}
-
       {ready && (() => {
         const carLeft  = pX(ir, LM.doorL);
         const carW     = pW(ir, LM.doorR - LM.doorL);
@@ -316,61 +282,17 @@ export default function GeneratePage() {
 
               return (
                 <React.Fragment key={key}>
-                  {/* Rod overlay — redraws closet-bg.png over the strip, giving a
-                      natural rod appearance. The pill cover below hides the baked-in
-                      "+ ADD" text without creating a full-width white bar. */}
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      position: "absolute",
-                      top:    rowTapTops[rowIdx],
-                      left:   carLeft,
-                      right:  carRight,
-                      height: Math.max(0, rowLayouts[rowIdx].carTop - rowTapTops[rowIdx]),
-                      zIndex: 21,
-                      pointerEvents: "none",
-                      backgroundImage: "url('/closet-bg.png')",
-                      backgroundSize:     `${ir.width}px ${ir.height}px`,
-                      backgroundPosition: `${-pW(ir, LM.doorL)}px ${-rowTapTops[rowIdx]}px`,
-                      backgroundRepeat:   "no-repeat",
-                    }}
-                  />
-
-                  {/* Pill cover — sits over just the "+ ADD …" portion of the
-                      baked-in image, hiding that text and showing the category
-                      name in the same font as the wardrobe rods. */}
-                  <div
-                    aria-hidden="true"
-                    style={{
-                      position: "absolute",
-                      top:       pY(ir, lm.btnCY) - pH(ir, 0.013),
-                      left:      "50%",
-                      transform: "translateX(-50%)",
-                      width:     pW(ir, 0.22),
-                      height:    pH(ir, 0.026),
-                      zIndex:    22,
-                      pointerEvents: "none",
-                      background:   "#F7E8E5",
-                      borderRadius: 999,
-                      display:      "flex",
-                      alignItems:   "center",
-                      justifyContent: "center",
-                    }}
-                  >
+                  <div style={{
+                    position: "absolute", top: labelY, left: carLeft, width: carW,
+                    transform: "translateY(-50%)", zIndex: 12, textAlign: "center", pointerEvents: "none",
+                  }}>
                     <span style={{
-                      fontSize:      Math.max(8, pH(ir, 0.009)),
-                      fontWeight:    700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      color:         "#000000",
-                      fontFamily:    "var(--font-sans)",
-                      lineHeight:    1,
-                    }}>
-                      {key === "tops" ? "Tops" : key === "bottoms" ? "Bottoms" : "Shoes"}
-                    </span>
+                      fontSize: Math.max(9, pH(ir, 0.013)), fontWeight: 800,
+                      letterSpacing: "0.12em", color: "rgba(120,60,70,0.75)",
+                      fontFamily: "var(--font-display)", textTransform: "uppercase",
+                    }}>{label}</span>
                   </div>
 
-                  {/* Clothing carousel */}
                   {items.length > 0 ? (
                     <div style={{
                       position: "absolute", top: secTop, left: carLeft2, width: carW2, height: secH,
@@ -447,42 +369,21 @@ export default function GeneratePage() {
               </div>
             )}
 
-            {/* ── Bottom action bar — clean white panel over the rug area ──
-                Covers all three baked-in wardrobe circles (hanger / save / mannequin)
-                with a solid white bar so only the Generate page's buttons show. */}
-            <div
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                top:    pY(ir, LM.barY),
-                left:   0,
-                right:  0,
-                height: pH(ir, LM.barBot - LM.barY),
-                zIndex: 18,
-                pointerEvents: "none",
-                background: [
-                  "repeating-linear-gradient(45deg,  transparent, transparent 12px, rgba(180,130,0,0.28) 12px, rgba(180,130,0,0.28) 24px)",
-                  "repeating-linear-gradient(-45deg, transparent, transparent 12px, rgba(255,255,255,0.18) 12px, rgba(255,255,255,0.18) 24px)",
-                  "#F0C030",
-                ].join(", "),
-                borderTop: "1.5px solid rgba(180,130,0,0.35)",
-              }}
-            />
+            {/* Action bar background */}
+            <div aria-hidden="true" style={{
+              position: "absolute", top: pY(ir, LM.barY), left: 0, width: "100%",
+              height: pH(ir, LM.barBot - LM.barY), zIndex: 18, pointerEvents: "none",
+              background: "rgba(255,248,250,0.96)", borderTop: "1px solid rgba(220,150,160,0.25)",
+            }} />
 
-            {/* ── CTA buttons — sit on top of the white bar ── */}
-            <div
-              style={{
-                position: "absolute",
-                top:    pY(ir, LM.barY),
-                left:   0,
-                right:  0,
-                height: pH(ir, LM.barBot - LM.barY),
-                zIndex: 22,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
+            {/* CTA buttons */}
+            <div style={{
+              position: "absolute",
+              top: pY(ir, LM.barY), left: pX(ir, LM.doorL),
+              width: pW(ir, LM.doorR - LM.doorL),
+              height: pH(ir, LM.barBot - LM.barY),
+              zIndex: 22, display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
               <AnimatePresence mode="wait">
 
                 {/* IDLE: Spin It */}
@@ -552,23 +453,15 @@ export default function GeneratePage() {
                     >
                       <span>Next</span><span style={{ fontSize: 14, lineHeight: 1 }}>✨</span>
                     </button>
-
-                    {/* SAVE IT — yellow, icon below text */}
                     <button
                       onClick={() => setIsSaveOpen(true)} disabled={!canSave}
                       style={{
-                        flexGrow: 1, flexShrink: 1, flexBasis: "0%",
-                        minWidth: 0,
-                        height: 44, borderRadius: 24,
-                        border: "2.5px solid #000",
-                        background: canSave ? "linear-gradient(to bottom, #f6db3a, #c98f12)" : "rgba(210,185,100,0.32)",
-                        color: "#2e1a00",
-                        fontFamily: "var(--font-display)",
-                        fontWeight: 800,
-                        fontSize: 14,
-                        letterSpacing: "-0.01em",
-                        textTransform: "uppercase",
-                        whiteSpace: "nowrap",
+                        flexGrow: 1, flexShrink: 1, flexBasis: "0%", minWidth: 0,
+                        height: 44, borderRadius: 24, border: "2.5px solid #D0909A",
+                        background: canSave ? "#fff" : "rgba(240,240,240,0.80)",
+                        color: "#4A3A3A", fontFamily: "var(--font-display)",
+                        fontWeight: 800, fontSize: 14, letterSpacing: "-0.01em",
+                        textTransform: "uppercase", whiteSpace: "nowrap",
                         boxShadow: canSave ? "2px 2px 0 rgba(0,0,0,0.85)" : "none",
                         cursor: canSave ? "pointer" : "default", opacity: canSave ? 1 : 0.5,
                         display: "flex", flexDirection: "column",
@@ -627,39 +520,6 @@ export default function GeneratePage() {
           </>
         );
       })()}
-
-      {/* ── Saved toast ── */}
-      <AnimatePresence>
-        {savedToast && (
-          <motion.div
-            key="saved-toast"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            transition={{ type: "spring", stiffness: 400, damping: 28 }}
-            style={{
-              position: "fixed",
-              bottom: 104,
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 60,
-              background: "#1a1a1a",
-              color: "#fff",
-              borderRadius: 999,
-              padding: "10px 20px",
-              fontSize: 13,
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-              boxShadow: "0 4px 18px rgba(0,0,0,0.22)",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-            }}
-          >
-            <span>💛</span> "{savedToast}" saved!
-          </motion.div>
-        )}
-      </AnimatePresence>
     </div>
   );
 }

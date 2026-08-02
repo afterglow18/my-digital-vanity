@@ -10,9 +10,11 @@ import React, {
 import { useLocation } from "wouter";
 import {
   useListClothing, getListClothingQueryKey,
-  useSaveOutfit, useListOutfits, getListOutfitsQueryKey,
-  ClothingItem,
-} from "@/lib/local-api";
+} from "@/hooks/useLocalWardrobe";
+import {
+  useListOutfits, useSaveOutfit, getListOutfitsQueryKey,
+} from "@/hooks/useLocalOutfits";
+import type { ClothingItem } from "@/types/local";
 import { X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ClosetRow, ClosetRowHandle } from "@/components/ClosetRow";
@@ -101,7 +103,7 @@ export default function WardrobePage() {
   const [upgradeReason, setUpgradeReason] = useState<UpgradeReason | null>(null);
   const [isSaveOpen,    setIsSaveOpen]    = useState(false);
   const [saveName,      setSaveName]      = useState("");
-  const [savedToast,    setSavedToast]    = useState<string | null>(null);
+  const [saveSuccess,   setSaveSuccess]   = useState(false);
 
   const saveOutfit = useSaveOutfit();
 
@@ -157,13 +159,13 @@ export default function WardrobePage() {
       .map(i => i.id);
     saveOutfit.mutate(
       { data: { name: saveName.trim(), itemIds } },
-      { onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-        const name = saveName.trim();
-        setIsSaveOpen(false); setSaveName("");
-        setSavedToast(name);
-        setTimeout(() => setSavedToast(null), 2500);
-      }},
+      {
+        onSuccess: () => {
+          queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
+          setSaveSuccess(true);
+          setTimeout(() => { setIsSaveOpen(false); setSaveSuccess(false); setSaveName(""); }, 1400);
+        },
+      },
     );
   };
 
@@ -222,8 +224,8 @@ export default function WardrobePage() {
               aria-label={`${totalItems} of ${FREE_ITEM_LIMIT} items used — tap to upgrade`}
               style={{
                 position: "absolute",
-                top: pY(ir, 0.240), left: "50%", transform: "translateX(-50%)",
-                zIndex: 12,
+                top: pY(ir, 0.165), left: "50%", transform: "translateX(-50%)",
+                zIndex: 25,
                 padding: "3px 14px", borderRadius: 20, border: "none",
                 background: totalItems >= FREE_ITEM_LIMIT
                   ? "rgba(200,40,40,0.14)"
@@ -326,94 +328,7 @@ export default function WardrobePage() {
             }}
           />
 
-          {/* Save Outfit — centre circle */}
-          <AnimatePresence mode="wait">
-            {isSaveOpen ? (
-              <motion.div
-                key="input"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 6 }}
-                style={{
-                  position: "absolute",
-                  bottom: `calc(100% - ${pY(ir, LM.barY)}px + 8px)`,
-                  left:   16,
-                  right:  16,
-                  display: "flex",
-                  gap: 6,
-                  zIndex: 20,
-                }}
-              >
-                <input
-                  type="text"
-                  placeholder="Name this outfit…"
-                  value={saveName}
-                  onChange={e => setSaveName(e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && handleSave()}
-                  data-testid="input-outfit-name"
-                  style={{
-                    flex: 1, height: 38, borderRadius: 20, padding: "0 14px",
-                    fontSize: 13, fontWeight: 600, color: "#3a2400",
-                    background: "rgba(255,252,245,0.98)",
-                    border: "1.5px solid rgba(196,155,42,0.50)",
-                    boxShadow: "0 3px 12px rgba(0,0,0,0.14)",
-                    outline: "none",
-                  }}
-                />
-                <button
-                  onClick={() => { setIsSaveOpen(false); setSaveName(""); }}
-                  style={{
-                    width: 38, height: 38, borderRadius: "50%", flexShrink: 0,
-                    background: "rgba(255,250,240,0.97)",
-                    border: "1.5px solid rgba(196,155,42,0.36)",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    cursor: "pointer",
-                  }}
-                >
-                  <X style={{ width: 14, height: 14, color: GOLD }} />
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={!saveName.trim() || saveOutfit.isPending}
-                  data-testid="button-save-outfit-confirm"
-                  style={{
-                    padding: "0 16px", height: 38, borderRadius: 20, flexShrink: 0,
-                    background: "linear-gradient(to bottom,#f5d840,#c89018)",
-                    color: "#3a2400", fontWeight: 700, fontSize: 13, border: "none",
-                    boxShadow: "0 3px 10px rgba(200,168,24,0.32)",
-                    opacity: (!saveName.trim() || saveOutfit.isPending) ? 0.42 : 1,
-                    cursor: "pointer",
-                  }}
-                >
-                  {saveOutfit.isPending ? "…" : "Save ♡"}
-                </button>
-              </motion.div>
-            ) : (
-              <button
-                key="save-zone"
-                onClick={handleSaveClick}
-                data-testid="button-save-outfit"
-                aria-label="Save Outfit"
-                style={{
-                  position: "absolute",
-                  top:    pY(ir, LM.barY),
-                  left:   pX(ir, LM.saveBtnL),
-                  right:  ir.left + pW(ir, 1 - LM.saveBtnR),
-                  height: pH(ir, LM.barBot - LM.barY),
-                  zIndex: 14,
-                  background: "transparent",
-                  border: "none",
-                  cursor: "pointer",
-                  borderRadius: 20,
-                  boxShadow: canSave
-                    ? "0 0 0 2.5px rgba(196,155,42,0.45)"
-                    : "none",
-                }}
-              />
-            )}
-          </AnimatePresence>
-
-          {/* Mannequin / dress-form icon — right circle → always opens upgrade */}
+          {/* Lipstick icon → upgrade */}
           <button
             onClick={() => setUpgradeReason("items")}
             aria-label="Upgrade to premium"
@@ -449,65 +364,6 @@ export default function WardrobePage() {
         </>
       )}
 
-      {/* ── Saved toast ── */}
-      <AnimatePresence>
-        {savedToast && (
-          <motion.div
-            key="saved-toast"
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 16 }}
-            transition={{ type: "spring", stiffness: 400, damping: 28 }}
-            style={{
-              position: "fixed",
-              bottom: 104,
-              left: "50%",
-              transform: "translateX(-50%)",
-              zIndex: 60,
-              background: "#1a1a1a",
-              color: "#fff",
-              borderRadius: 999,
-              padding: "10px 20px",
-              fontSize: 13,
-              fontWeight: 700,
-              whiteSpace: "nowrap",
-              boxShadow: "0 4px 18px rgba(0,0,0,0.22)",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-            }}
-          >
-            <span>💛</span> "{savedToast}" saved!
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Modals ── */}
-      <AnimatePresence>
-        {upgradeReason && (
-          <UpgradeSheet reason={upgradeReason} onClose={() => setUpgradeReason(null)} />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {addCategory && (
-          <QuickAddSheet
-            key={addCategory}
-            open={!!addCategory}
-            onOpenChange={open => !open && setAddCategory(null)}
-            category={addCategory}
-            existingCount={rowData[addCategory as RowKey]?.length ?? 0}
-          />
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {detailsItem && (
-          <ItemDetailsSheet
-            key={detailsItem.id}
-            item={detailsItem}
-            onClose={() => setDetailsItem(null)}
-          />
-        )}
-      </AnimatePresence>
     </div>
 
     {/* ── Modals — rendered OUTSIDE the overflow:hidden+transform container so

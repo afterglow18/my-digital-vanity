@@ -2,7 +2,7 @@ import React from "react";
 import { Link, useLocation } from "wouter";
 import { Shirt, Sparkles, Bookmark, UserCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useGetWardrobeStats } from "@/lib/local-api";
+import { useGetWardrobeStats } from "@/hooks/useLocalWardrobe";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -22,9 +22,9 @@ export function AppLayout({ children }: AppLayoutProps) {
   ];
 
   return (
-    <div className="min-h-[100dvh] w-full bg-[#f8f9fa] flex justify-center lg:py-8 lg:px-4">
-      {/* Phone Frame Constraint for Desktop */}
-      <div className="w-full max-w-md bg-background h-[100dvh] lg:min-h-[850px] lg:h-[850px] lg:border-[6px] lg:border-black lg:rounded-[3rem] lg:shadow-2xl relative overflow-hidden flex flex-col lg:overflow-y-auto">
+    <div className="min-h-[100dvh] w-full bg-[#f8f9fa] sm:bg-[#F4D6DD] flex justify-center 2xl:py-8 2xl:px-4">
+      {/* Full-width on all phones/iPads; phone-frame only on wide desktop (≥1536px) */}
+      <div className="w-full max-w-full 2xl:max-w-md bg-background h-[100dvh] 2xl:min-h-[850px] 2xl:h-[850px] 2xl:border-[6px] 2xl:border-black 2xl:rounded-[3rem] 2xl:shadow-2xl relative overflow-hidden flex flex-col 2xl:overflow-y-auto">
 
         {/* Main Content Area */}
         <main className="flex-1 overflow-y-auto pb-[90px] relative">

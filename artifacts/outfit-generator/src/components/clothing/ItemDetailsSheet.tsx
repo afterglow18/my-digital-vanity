@@ -5,25 +5,10 @@
  */
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, CheckCircle2,
-  Shirt, Check, BookmarkPlus,
-} from "lucide-react";
-import { AddToLookbookSheet } from './AddToLookbookSheet';
-import {
-  removeBackground,
-  blobToDataUrl,
-  dataUrlToBlob,
-} from "@/lib/backgroundRemoval";
-import { saveImage, deleteImage } from "@/lib/imageStorage";
-import {
-  ClothingItem,
-  ClothingItemUpdateCategory,
-  useUpdateClothingItem,
-  useDeleteClothingItem,
-  getListClothingQueryKey,
-  getListOutfitsQueryKey,
-} from "@/lib/local-api";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
+import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
+import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
+import { getListOutfitsQueryKey, useListOutfits, useAddItemToOutfit, useRemoveItemFromOutfit } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
 import { removeBackground } from "@/lib/backgroundRemoval";
@@ -88,152 +73,21 @@ function SelectField({
   );
 }
 
-// ── BgCompareOverlay ──────────────────────────────────────────────────────────
-
-interface BgCompareOverlayProps {
-  originalDataUrl: string;
-  cleanedDataUrl:  string;
-  onSave:   (choice: "original" | "cleaned") => void;
-  onCancel: () => void;
-}
-
-function BgCompareOverlay({
-  originalDataUrl,
-  cleanedDataUrl,
-  onSave,
-  onCancel,
-}: BgCompareOverlayProps) {
-  const [selected, setSelected] = useState<"original" | "cleaned">("cleaned");
-
-  const CHECKER = {
-    backgroundImage: "repeating-conic-gradient(#e5e7eb 0% 25%, white 0% 50%)",
-    backgroundSize: "16px 16px",
-  } as React.CSSProperties;
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: "100%" }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: "100%" }}
-      transition={{ type: "spring", damping: 28, stiffness: 240 }}
-      className="fixed inset-0 z-[75] flex flex-col max-w-md mx-auto bg-[#f9f4ee]"
-    >
-      {/* Header */}
-      <div
-        className="flex-shrink-0 flex items-center justify-between px-4 py-3
-                   bg-white border-b-2 border-black"
-        style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
-      >
-        <div>
-          <h2 className="font-display font-bold text-xl uppercase tracking-tight">
-            Choose a Version
-          </h2>
-          <p className="text-xs text-black/40 font-medium">Tap a photo to select it</p>
-        </div>
-        <button
-          onClick={onCancel}
-          className="w-9 h-9 border-2 border-black rounded-full flex items-center justify-center
-                     bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                     active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
-        >
-          <X className="w-4 h-4" />
-        </button>
-      </div>
-
-      {/* Side-by-side panels */}
-      <div className="flex-1 flex gap-3 p-4 min-h-0">
-        {(["original", "cleaned"] as const).map((side) => {
-          const isSelected = selected === side;
-          const url        = side === "original" ? originalDataUrl : cleanedDataUrl;
-          return (
-            <button
-              key={side}
-              onClick={() => setSelected(side)}
-              className={`relative flex-1 flex flex-col rounded-2xl overflow-hidden border-2
-                          transition-all duration-150 focus:outline-none
-                          ${isSelected
-                            ? "border-[#f472b6] shadow-[0_0_0_3px_#f472b6]"
-                            : "border-black/20"}`}
-            >
-              {/* Image */}
-              <div className="flex-1 min-h-0 w-full" style={CHECKER}>
-                <img
-                  src={url}
-                  alt={side}
-                  className="w-full h-full object-contain"
-                  draggable={false}
-                />
-              </div>
-
-              {/* Label bar */}
-              <div
-                className={`flex-shrink-0 py-2 text-center text-xs font-bold uppercase tracking-wide
-                             ${isSelected
-                               ? "bg-[#f472b6] text-white"
-                               : "bg-white text-black/60 border-t border-black/10"}`}
-              >
-                {side === "original" ? "Original" : "Cleaned ✨"}
-              </div>
-
-              {/* Selection checkmark */}
-              {isSelected && (
-                <div className="absolute top-2 right-2 bg-[#f472b6] rounded-full p-0.5 shadow">
-                  <CheckCircle2 className="w-5 h-5 text-white" fill="white" />
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Footer */}
-      <div
-        className="flex-shrink-0 px-4 py-4 bg-white border-t-2 border-black flex flex-col gap-2"
-        style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}
-      >
-        <button
-          onClick={() => onSave(selected)}
-          className="w-full btn-brutalist py-3 rounded-xl flex items-center justify-center gap-2 text-sm"
-        >
-          <Sparkles className="w-4 h-4" />
-          {selected === "cleaned" ? "Save Cleaned Version" : "Save Original"}
-        </button>
-        <button
-          onClick={onCancel}
-          className="w-full py-3 rounded-xl text-sm font-bold uppercase border-2 border-black/20
-                     text-black/40 hover:text-black hover:border-black/40 transition-all"
-        >
-          Cancel
-        </button>
-      </div>
-    </motion.div>
-  );
-}
-
 // ── Component ─────────────────────────────────────────────────────────────────
 
 interface ItemDetailsSheetProps {
   item: ClothingItem | null;
   onClose: () => void;
   onDeleted?: () => void;
-  /** When true (search results, favorites): show "Add to Lookbook" instead of "Clean Up Photo".
-   *  "Wearing Today" always shows regardless. */
+  /** When true, show "Add to Lookbook" instead of "Clean Up Photo".
+   *  Pass as true from search results and the favorites page. */
   showAddToLookbook?: boolean;
 }
 
 interface FormState {
-  name: string;
-  brand: string;
-  color: string;
-  size: string;
-  season: string;
-  occasion: string;
-  purchasePrice: string;
-  purchaseDate: string;
-  notes: string;
-  isFavorite: boolean;
-  category: string;
-  timesWorn: string;
+  name: string; brand: string; color: string; size: string;
+  season: string; occasion: string; purchasePrice: string;
+  purchaseDate: string; notes: string; isFavorite: boolean; category: string;
 }
 
 function toForm(item: ClothingItem): FormState {
@@ -249,7 +103,6 @@ function toForm(item: ClothingItem): FormState {
     notes:         item.notes         ?? "",
     isFavorite:    item.isFavorite    ?? false,
     category:      item.category      ?? "",
-    timesWorn:     String(item.timesWorn ?? 0),
   };
 }
 
@@ -265,72 +118,32 @@ function isDirty(form: FormState, item: ClothingItem): boolean {
     form.purchaseDate  !== (item.purchaseDate  ?? "") ||
     form.notes         !== (item.notes         ?? "") ||
     form.isFavorite    !== (item.isFavorite    ?? false) ||
-    form.category      !== (item.category      ?? "")  ||
-    form.timesWorn     !== String(item.timesWorn ?? 0)
+    form.category      !== (item.category      ?? "")
   );
 }
 
 export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook = false }: ItemDetailsSheetProps) {
-  const [form, setForm]           = useState<FormState | null>(null);
+  const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [bgRemoving, setBgRemoving] = useState(false);
-  const [bgError,    setBgError]    = useState<string | null>(null);
-  // compare overlay: holds both data URLs while user picks
-  const [compareState, setCompareState] = useState<{
-    originalDataUrl: string;
-    cleanedDataUrl:  string;
-  } | null>(null);
-  // optimistic display URL — set immediately on save so there is no flash
+  const [timesUsedInput, setTimesUsedInput] = useState("0");
+  const [showLookbookPicker, setShowLookbookPicker] = useState(false);
+
+  // Local image URL — starts from item, updates immediately when user picks a cleaned version
   const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
-  // track whether a background save is in progress (for cleanup on unmount)
-  const bgSaveAbortRef = useRef(false);
-  // set to true when the user skips while analysis is still running
-  const bgAnalysisAbortRef = useRef(false);
 
-  // ── Wearing Today (item-level) ────────────────────────────────────────────
-  const [showLookbookSheet, setShowLookbookSheet] = useState(false);
-  const [itemWornToday, setItemWornToday] = useState(false);
-  const prevItemWornRef = useRef<{ timesWorn: number; lastWornDate: string | null } | null>(null);
+  // Generation counter — incremented whenever a cleanup is started or cancelled so a
+  // stale WASM result can't re-open the compare sheet after the user already saved.
+  const cleanupIdRef = useRef(0);
 
-  const todayStr = (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  })();
-
-  const formatShortDate = (iso: string) => {
-    const [y, m, d] = iso.split('-').map(Number);
-    return `${m}/${d}/${String(y).slice(2)}`;
-  };
-
-  const handleWearItem = () => {
-    if (!item) return;
-    const newTimesWorn = (item.timesWorn ?? 0) + 1;
-    prevItemWornRef.current = { timesWorn: item.timesWorn ?? 0, lastWornDate: item.lastWornDate ?? null };
-    setItemWornToday(true);
-    setForm((prev) => prev ? { ...prev, timesWorn: String(newTimesWorn) } : prev);
-    updateItem.mutate(
-      { id: item.id, data: { timesWorn: newTimesWorn, lastWornDate: todayStr } },
-      { onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-      }},
-    );
-  };
-
-  const handleUnwearItem = () => {
-    if (!item || !prevItemWornRef.current) return;
-    const prev = prevItemWornRef.current;
-    setItemWornToday(false);
-    setForm((f) => f ? { ...f, timesWorn: String(prev.timesWorn) } : f);
-    updateItem.mutate(
-      { id: item.id, data: { timesWorn: prev.timesWorn, lastWornDate: prev.lastWornDate } },
-      { onSuccess: () => {
-        queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-      }},
-    );
-    prevItemWornRef.current = null;
-  };
+  // Photo cleanup state
+  const [cleanupProcessing, setCleanupProcessing] = useState(false);
+  const [cleanupError, setCleanupError]           = useState<string | null>(null);
+  const [removalProgress, setRemovalProgress]     = useState<RemovalProgress | null>(null);
+  const [compareData, setCompareData] = useState<{
+    originalDataUrl: string;
+    cleanedDataUrl: string;
+    hadSubject: boolean;
+  } | null>(null);
 
   const updateItem  = useUpdateClothingItem();
   const deleteItem  = useDeleteClothingItem();
@@ -351,12 +164,6 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
     setRemovalProgress(null);
     setCompareData(null);
   }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // After background save completes the query re-fetches with a new imageObjectPath.
-  // Clear the optimistic local URL so the freshly-stored file takes over.
-  useEffect(() => {
-    setLocalImageUrl(null);
-  }, [item?.imageObjectPath]);
 
   if (!item || !form) return null;
 
@@ -388,78 +195,10 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
           notes:         form.notes.trim() || null,
           isFavorite:    form.isFavorite,
           category:      (form.category || item.category) as ClothingItemUpdateCategory,
-          timesWorn:     Math.max(0, parseInt(form.timesWorn, 10) || 0),
         },
       },
       { onSuccess: () => { invalidate(); onClose(); } },
     );
-  };
-
-  // ── Step 1: run bg removal, then show compare overlay ────────────────────
-  const handleCleanUpPhoto = async () => {
-    if (!item.imageObjectPath) return;
-    const displayUrl = getImageUrl(item.imageObjectPath);
-    if (!displayUrl) return;
-
-    bgAnalysisAbortRef.current = false;
-    setBgError(null);
-    setBgRemoving(true);
-    try {
-      const srcBlob        = await fetch(displayUrl).then((r) => r.blob());
-      const originalDataUrl = await blobToDataUrl(srcBlob);
-      const cleanedDataUrl  = await removeBackground(originalDataUrl);
-      // User tapped "Keep Original" while WASM was running — discard result
-      if (bgAnalysisAbortRef.current) return;
-      setCompareState({ originalDataUrl, cleanedDataUrl });
-    } catch (err) {
-      console.error("[details] bg removal failed:", err);
-      setBgError("Could not remove background. Please try again.");
-    } finally {
-      setBgRemoving(false);
-    }
-  };
-
-  // ── Step 2: user confirmed their choice in the overlay ────────────────────
-  const handleCompareSave = async (choice: "original" | "cleaned") => {
-    if (!compareState) return;
-
-    // Immediately update the visible photo — no flash while DB write runs.
-    const chosenUrl = choice === "cleaned"
-      ? compareState.cleanedDataUrl
-      : compareState.originalDataUrl;
-    setLocalImageUrl(chosenUrl);
-    setCompareState(null);
-
-    if (choice === "original") {
-      // Nothing changed in storage — original is already saved.
-      return;
-    }
-
-    // Save cleaned version in the background.
-    bgSaveAbortRef.current = false;
-    try {
-      const blob        = await dataUrlToBlob(compareState.cleanedDataUrl);
-      const newFilename = await saveImage(
-        blob,
-        `${item.category}-${item.id}-cleaned-${Date.now()}.png`,
-      );
-      if (bgSaveAbortRef.current) return; // component unmounted
-      if (item.imageObjectPath) await deleteImage(item.imageObjectPath);
-      updateItem.mutate(
-        { id: item.id, data: { imageObjectPath: newFilename } },
-        {
-          onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-            queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() });
-            // imageObjectPath changed → useEffect clears localImageUrl
-          },
-        },
-      );
-    } catch (err) {
-      console.error("[details] background save failed:", err);
-      // The chosen image is still showing optimistically; a silent failure
-      // here means the item reverts on next open. Acceptable trade-off.
-    }
   };
 
   const handleDelete = () => {
@@ -520,7 +259,6 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
   };
 
   return (
-    <>
     <motion.div
       initial={{ opacity: 0, y: "100%" }}
       animate={{ opacity: 1, y: 0 }}
@@ -528,13 +266,11 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
       transition={{ type: "spring", damping: 28, stiffness: 240 }}
       className="fixed inset-0 z-[65] flex flex-col max-w-md mx-auto bg-[#f9f4ee] overflow-y-auto"
     >
-      {/* ── Header ── */}
-      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3
+      {/* Header */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3
                       bg-white border-b-2 border-black flex-shrink-0"
-           style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
-        <h2 className="font-display font-bold text-xl uppercase tracking-tight">
-          Item Details
-        </h2>
+        style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
+        <h2 className="font-display font-bold text-xl uppercase tracking-tight">Item Details</h2>
         <div className="flex items-center gap-2">
           {/* Favourite toggle */}
           <button
@@ -580,77 +316,86 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
             }}
           >
             <img
-              src={localImageUrl ?? getImageUrl(item.imageObjectPath)!}
+              src={getImageUrl(localImageUrl ?? item.imageObjectPath)!}
               alt={item.name}
               className="w-full h-full object-contain"
             />
           </div>
+
+          {/* Photo action button — Clean Up Photo OR Add to Lookbook */}
+          {item.imageObjectPath && (
+            <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
+              {showAddToLookbook ? (
+                <button
+                  onClick={() => setShowLookbookPicker(true)}
+                  className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                             font-bold uppercase border-2 border-black bg-white
+                             shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                             active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
+                >
+                  <span className="text-base leading-none">💄</span>
+                  Add to Lookbook
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleCleanUpPhoto}
+                    disabled={cleanupProcessing || alreadyCleaned}
+                    className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                               font-bold uppercase border-2 border-black bg-white
+                               shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                               active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                               transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {cleanupProcessing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {removalProgress?.stage === "loading"
+                          ? `Downloading… ${removalProgress.pct}%`
+                          : "Removing background…"}
+                      </>
+                    ) : alreadyCleaned ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Background Removed
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Clean Up Photo
+                      </>
+                    )}
+                  </button>
+                  {cleanupError && (
+                    <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 
-      {/* ── Action buttons (always shown) ── */}
-      <div className="flex-shrink-0 border-b-2 border-black px-4 py-2 bg-white flex flex-col gap-2">
-        {/* Button 1: Add to Lookbook OR Clean Up Photo */}
-        {showAddToLookbook ? (
-          <button
-            onClick={() => setShowLookbookSheet(true)}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl
-                       border-2 border-black bg-[#f9f4ee] font-bold text-sm uppercase tracking-wide
-                       shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
-                       active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+      {/* PhotoCompareSheet overlay */}
+      <AnimatePresence>
+        {compareData && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[70] flex flex-col max-w-md mx-auto"
           >
-            <Heart className="w-4 h-4 fill-yellow-400 text-yellow-400" /> Add to Lookbook
-          </button>
-        ) : (
-          item.imageObjectPath && !item.imageObjectPath.includes('-cleaned-') && (
-            <>
-              <button
-                onClick={handleCleanUpPhoto}
-                disabled={bgRemoving}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl
-                           border-2 border-black bg-[#f9f4ee] font-bold text-sm uppercase tracking-wide
-                           shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
-                           active:translate-x-0.5 active:translate-y-0.5 active:shadow-none
-                           disabled:opacity-50 transition-all"
-              >
-                {bgRemoving
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Analyzing Photo…</>
-                  : <><Sparkles className="w-4 h-4" /> Clean Up Photo ✨</>}
-              </button>
-              {bgRemoving && (
-                <button
-                  onClick={() => { bgAnalysisAbortRef.current = true; setBgRemoving(false); }}
-                  className="w-full py-1.5 text-xs font-semibold text-black/40 hover:text-black/70 transition-colors"
-                >
-                  Keep Original
-                </button>
-              )}
-              {bgError && <p className="text-xs text-red-600 text-center">{bgError}</p>}
-            </>
-          )
-        )}
-      </div>
-
-      {/* ── Form ── */}
-      <div className="flex-1 px-4 py-5 flex flex-col gap-4">
-
-        {/* Name */}
-        <Field
-          label="Item Name"
-          value={form.name}
-          onChange={patch("name") as (v: string) => void}
-          placeholder="e.g. White Linen Shirt"
-        />
-
-        {/* Brand + Color */}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Brand"  value={form.brand} onChange={patch("brand") as (v: string) => void} placeholder="Nike, Zara…" />
-          <Field label="Color"  value={form.color} onChange={patch("color") as (v: string) => void} placeholder="Navy Blue" />
-        </div>
-
-        {/* Size — hidden for accessories */}
-        {item.category !== "accessories" && (
-          <Field label="Size" value={form.size} onChange={patch("size") as (v: string) => void} placeholder="S, M, L, 32, 8…" />
+            <PhotoCompareSheet
+              originalDataUrl={compareData.originalDataUrl}
+              cleanedDataUrl={compareData.cleanedDataUrl}
+              hadSubject={compareData.hadSubject}
+              bgProcessing={cleanupProcessing}
+              removalProgress={removalProgress}
+              cleanupError={cleanupError}
+              onSelect={handleCompareSelect}
+              onCancel={() => { setCompareData(null); setCleanupError(null); }}
+            />
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -773,31 +518,30 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
                        placeholder:font-normal placeholder:text-black/25"
           />
         </div>
-
-        {/* Category + Times Worn */}
         <div className="grid grid-cols-2 gap-3">
-          <SelectField
-            label="Category"
-            value={form.category}
-            onChange={patch("category") as (v: string) => void}
-            options={CATEGORY_OPTIONS}
-          />
+          <SelectField label="Category" value={form.category}
+                       onChange={patch("category") as (v: string) => void} options={CATEGORY_OPTIONS} />
           <div className="flex flex-col gap-1">
-            <Field
-              label="Times Worn"
+            <span className="text-[10px] font-bold uppercase tracking-widest text-black/40">Times Used</span>
+            <input
               type="number"
-              value={form.timesWorn}
-              onChange={patch("timesWorn") as (v: string) => void}
-              placeholder="0"
+              inputMode="numeric"
+              min="0"
+              value={timesUsedInput}
+              onChange={(e) => setTimesUsedInput(e.target.value)}
+              onBlur={() => {
+                const parsed = Math.max(0, parseInt(timesUsedInput, 10) || 0);
+                setTimesUsedInput(String(parsed));
+                if (parsed !== (item.timesWorn ?? 0)) {
+                  updateItem.mutate(
+                    { id: item.id, data: { timesWorn: parsed } },
+                    { onSuccess: invalidate },
+                  );
+                }
+              }}
+              className="w-full border-2 border-black rounded-lg px-3 py-2 text-sm font-medium
+                         bg-white focus:outline-none focus:ring-2 focus:ring-primary"
             />
-            {item.lastWornDate && (() => {
-              const [y, m, d] = item.lastWornDate.split("-").map(Number);
-              return (
-                <span className="text-[10px] font-semibold text-black/40 pl-1">
-                  Last worn: {m}/{d}/{String(y).slice(2)}
-                </span>
-              );
-            })()}
           </div>
         </div>
         {item.lastUsedDate && (
@@ -862,25 +606,5 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
         )}
       </div>
     </motion.div>
-
-    {/* ── Compare overlay ── */}
-    <AnimatePresence>
-      {compareState && (
-        <BgCompareOverlay
-          originalDataUrl={compareState.originalDataUrl}
-          cleanedDataUrl={compareState.cleanedDataUrl}
-          onSave={handleCompareSave}
-          onCancel={() => setCompareState(null)}
-        />
-      )}
-    </AnimatePresence>
-
-    {/* ── Add to Lookbook sheet ── */}
-    <AnimatePresence>
-      {showLookbookSheet && (
-        <AddToLookbookSheet item={item} onClose={() => setShowLookbookSheet(false)} />
-      )}
-    </AnimatePresence>
-    </>
   );
 }
