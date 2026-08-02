@@ -176,7 +176,7 @@ workflows:
       - name: Set version and build number
         script: |
           cd artifacts/outfit-generator/ios/App
-          agvtool new-marketing-version 1.0.4
+          agvtool new-marketing-version 1.0.5
           agvtool new-version -all $BUILD_NUMBER
 
       - name: Re-apply provisioning profiles after cap sync
