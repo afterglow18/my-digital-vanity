@@ -75,15 +75,17 @@ export function useVisionIndexer() {
         const items = await dbListClothing();
         const isNative = Capacitor.isNativePlatform();
 
+        console.log('[VisionIndexer] total items:', items.length, '| native:', isNative);
+        items.forEach(i => console.log(`  ${i.name}: v=${i.visionVersion ?? 0} path=${i.imageObjectPath ? 'set(' + String(i.imageObjectPath).slice(0,30) + '…)' : 'MISSING'}`));
+
         const needsIndexing = items.filter((item) => {
           if (!item.imageObjectPath) return false;
           const v = item.visionVersion ?? 0;
           if (isNative) return v < NATIVE_VISION_VERSION;
-          // Web: skip only correctly-analyzed (v=4) and correctly-empty (v=6=WEB_EMPTY_VERSION).
-          // v=5 is a legacy "empty" that was set while the URL bug was present — must retry.
           return v !== WEB_VISION_VERSION && v !== WEB_EMPTY_VERSION;
         });
 
+        console.log('[VisionIndexer] needs indexing:', needsIndexing.length);
         if (needsIndexing.length === 0) return;
 
         let updatedAny = false;
