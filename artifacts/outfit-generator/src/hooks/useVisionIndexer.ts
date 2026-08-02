@@ -19,7 +19,6 @@
 
 import { useEffect, useRef } from 'react';
 import { Capacitor } from '@capacitor/core';
-import { toast } from 'sonner';
 import { dbListClothing, dbUpdateClothing } from '@/lib/db';
 import { getImageUrl } from '@/lib/utils';
 import { extractWebVisionLabels, WEB_VISION_VERSION, WEB_EMPTY_VERSION } from '@/lib/visionWeb';
@@ -88,7 +87,6 @@ export function useVisionIndexer() {
 
         if (needsIndexing.length === 0) return;
 
-        const toastId = toast.loading('Preparing photo search…', { duration: Infinity });
         let updatedAny = false;
 
         for (const item of needsIndexing) {
@@ -127,8 +125,6 @@ export function useVisionIndexer() {
 
           await delay(DELAY_MS);
         }
-
-        toast.dismiss(toastId);
 
         // Invalidate the clothing cache so search picks up the new labels immediately
         if (updatedAny) {
