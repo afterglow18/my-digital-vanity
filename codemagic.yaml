@@ -4,7 +4,7 @@
 #
 # REQUIRED — Codemagic → your app → Environment variables
 # Group "signing":
-#   APP_STORE_CONNECT_KEY_IDENTIFIER   67K2T48W7Y
+#   APP_STORE_CONNECT_KEY_IDENTIFIER   2KM3V9WLZ8
 #   APP_STORE_CONNECT_ISSUER_ID        66d4ce13-148d-4d6b-bab8-f1d0d8441a1e
 #   APP_STORE_CONNECT_PRIVATE_KEY      Full .p8 file contents (mark Secure)
 #
@@ -148,7 +148,7 @@ workflows:
           # Write the .p8 key to disk so xcodebuild can authenticate with
           # Apple Developer Portal to resolve provisioning profiles automatically.
           mkdir -p "$HOME/private_keys"
-          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
           xcodebuild \
             -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/App.xcarchive" \
