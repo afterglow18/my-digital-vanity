@@ -15,16 +15,23 @@
  *   WEB_EMPTY_VERSION  = 5  — analyzed, no labels found (do NOT retry)
  */
 
-export const WEB_VISION_VERSION = 4;
 /**
- * 7 = analysed correctly (correct URL + correct canvas draw) but photo has no foreground
- * colors worth indexing — do NOT retry.
+ * Algorithm version — increment whenever the extraction logic changes so that
+ * previously-analyzed items are automatically re-processed on next launch.
+ * Current: v5 — correct URL + correct canvas draw + extended pink/rose hue range.
  *
- * History of sentinel values — all must be retried because they were set by buggy code:
- *   5 — indexer passed raw storage key instead of resolved URL (URL bug)
- *   6 — indexer passed correct URL but canvas drew a blank (double-Image bug)
+ * History:
+ *   4 — initial algorithm (double-Image bug, wrong pink boundary)
+ *   5 — fixed draw + extended pink/rose to cover rose-gold and blush
  */
-export const WEB_EMPTY_VERSION  = 7;
+export const WEB_VISION_VERSION = 5;
+
+/**
+ * High sentinel meaning "analyzed correctly by the current algorithm version but
+ * the photo contains no distinguishable foreground colors — do NOT retry."
+ * Kept well above WEB_VISION_VERSION so there's room to bump the algorithm.
+ */
+export const WEB_EMPTY_VERSION  = 100;
 
 // Maximum Euclidean RGB distance to consider a pixel "background"
 const BG_TOLERANCE = 35;
@@ -74,16 +81,18 @@ function colorName(px: Rgb): string {
   if (s < 0.40 && v > 0.55 && h >= 20 && h <= 45) return 'tan';
   if (s >= 0.30 && v < 0.55 && h >= 15 && h <= 40) return 'brown';
 
-  // Chromatic color families
-  if (h >= 345 || h < 15)                           return 'red';
-  if (h >= 15  && h < 45)                           return s > 0.5 ? 'orange' : 'brown';
-  if (h >= 45  && h < 75)                           return 'yellow';
-  if (h >= 75  && h < 165)                          return 'green';
-  if (h >= 165 && h < 200)                          return 'teal';
-  if (h >= 200 && h < 260)                          return 'blue';
-  if (h >= 260 && h < 300)                          return 'purple';
-  // Pink: magenta/rose range with decent value
-  if (h >= 300 && h < 345 && v > 0.60)             return 'pink';
+  // Chromatic color families — ordered most-specific first
+  // Pink covers: magenta (h 300-345), rose/blush (h 345-360 or 0-20 with low-medium
+  // saturation and high value). Saturated 0-20° is red; unsaturated/pastel is pink.
+  if ((h >= 345 || h < 20) && s < 0.55 && v > 0.60) return 'pink';  // rose, blush, mauve
+  if (h >= 300 && h < 345 && v > 0.55)               return 'pink';  // hot pink, magenta
+  if (h >= 345 || h < 15)                            return 'red';
+  if (h >= 15  && h < 45)                            return s > 0.5 ? 'orange' : 'brown';
+  if (h >= 45  && h < 75)                            return 'yellow';
+  if (h >= 75  && h < 165)                           return 'green';
+  if (h >= 165 && h < 200)                           return 'teal';
+  if (h >= 200 && h < 260)                           return 'blue';
+  if (h >= 260 && h < 300)                           return 'purple';
   return 'purple';
 }
 

@@ -13,13 +13,21 @@ import { Capacitor } from '@capacitor/core';
 import { getImageUrl } from '@/lib/utils';
 import { extractWebVisionLabels, WEB_EMPTY_VERSION } from '@/lib/visionWeb';
 
+/**
+ * v2 — runs canvas color extraction in parallel with Apple Vision so iOS items
+ * gain color labels ("pink", "gold") alongside object labels ("shoe", "bottle").
+ * Bump this whenever the native analysis logic changes; needsIndexing in the
+ * batch indexer uses `v < NATIVE_VISION_VERSION` so old items are automatically
+ * re-processed on next launch.
+ */
+
 export interface VisionResult {
   visionLabels: string[];
   visionText: string[];
   visionVersion: number;
 }
 
-const NATIVE_VISION_VERSION = 1;
+export const NATIVE_VISION_VERSION = 2;
 
 /** Fetch a URL and return its contents as a raw base64 string (no data-URL prefix). */
 async function fetchAsBase64(url: string): Promise<string> {
@@ -64,8 +72,19 @@ export async function analyzeSingleItemVision(imageObjectPath: string): Promise<
     if (!imageUrl) return { visionLabels: [], visionText: [], visionVersion: WEB_EMPTY_VERSION };
 
     if (Capacitor.isNativePlatform()) {
-      const { labels, text } = await analyzeNative(imageUrl);
-      return { visionLabels: labels, visionText: text, visionVersion: NATIVE_VISION_VERSION };
+      // Run Apple Vision (object/scene labels + OCR) and canvas color extraction in parallel.
+      // Apple Vision never outputs color names; the canvas extractor fills that gap.
+      const [nativeResult, webResult] = await Promise.all([
+        analyzeNative(imageUrl),
+        extractWebVisionLabels(imageUrl),
+      ]);
+      // Union both label sets, deduplicated. Web colors come first so they rank higher in search.
+      const mergedLabels = [...new Set([...webResult.labels, ...nativeResult.labels])];
+      return {
+        visionLabels: mergedLabels,
+        visionText:   nativeResult.text,
+        visionVersion: NATIVE_VISION_VERSION,
+      };
     } else {
       const { labels, version } = await extractWebVisionLabels(imageUrl);
       return { visionLabels: labels, visionText: [], visionVersion: version };

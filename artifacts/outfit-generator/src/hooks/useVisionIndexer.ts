@@ -24,7 +24,7 @@ import { extractWebVisionLabels, WEB_VISION_VERSION, WEB_EMPTY_VERSION } from '@
 import { queryClient } from '@/lib/queryClient';
 import { getListClothingQueryKey } from '@/hooks/useLocalWardrobe';
 
-const NATIVE_VISION_VERSION = 1;
+import { NATIVE_VISION_VERSION } from '@/lib/visionAnalysis';
 const DELAY_MS = 350;
 
 function delay(ms: number): Promise<void> {
@@ -75,17 +75,14 @@ export function useVisionIndexer() {
         const items = await dbListClothing();
         const isNative = Capacitor.isNativePlatform();
 
-        console.log('[VisionIndexer] total items:', items.length, '| native:', isNative);
-        items.forEach(i => console.log(`  ${i.name}: v=${i.visionVersion ?? 0} path=${i.imageObjectPath ? 'set(' + String(i.imageObjectPath).slice(0,30) + '…)' : 'MISSING'}`));
-
         const needsIndexing = items.filter((item) => {
           if (!item.imageObjectPath) return false;
           const v = item.visionVersion ?? 0;
           if (isNative) return v < NATIVE_VISION_VERSION;
+          // Re-run anything below the current algorithm version; skip only v=WEB_VISION_VERSION
+          // (correctly analyzed by current algorithm) and v=WEB_EMPTY_VERSION (truly empty).
           return v !== WEB_VISION_VERSION && v !== WEB_EMPTY_VERSION;
         });
-
-        console.log('[VisionIndexer] needs indexing:', needsIndexing.length);
         if (needsIndexing.length === 0) return;
 
         let updatedAny = false;
