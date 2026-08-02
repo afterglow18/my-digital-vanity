@@ -92,6 +92,26 @@ workflows:
           # ── Step 2: add all files to the Xcode project ───────────────────────
           ruby codemagic_scripts/add_to_xcodeproj.rb
 
+      - name: Compile-check VisionPlugin
+        script: |
+          # Build the App target for testing (compiles all sources including
+          # VisionPlugin.swift) without running tests or producing an archive.
+          # Fails fast if any Swift type-check or framework linkage error exists,
+          # saving a full Codemagic archive cycle.
+          cd artifacts/outfit-generator/ios/App
+          xcodebuild \
+            -workspace App.xcodeproj/project.xcworkspace \
+            -scheme App \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -configuration Debug \
+            ONLY_ACTIVE_ARCH=NO \
+            ARCHS=arm64 \
+            build-for-testing \
+            2>&1 | tee /tmp/vision-compile-check.log
+          # Propagate xcodebuild's exit code through the tee pipe
+          exit ${PIPESTATUS[0]}
+
       - name: Add export compliance and privacy keys to Info.plist
         script: |
           PLIST="artifacts/outfit-generator/ios/App/App/Info.plist"

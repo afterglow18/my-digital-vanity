@@ -42,5 +42,23 @@ puts "Using group: #{app_group.path}"
   end
 end
 
+# ── Ensure Vision.framework is in Link Binary With Libraries ────────────────
+# VisionPlugin.swift imports Vision; without explicit linkage the archive
+# linker can silently miss it on some Xcode/SDK configurations.
+vision_already_linked = target.frameworks_build_phase.files.any? do |bf|
+  bf.file_ref&.path == 'Vision.framework'
+end
+
+unless vision_already_linked
+  vision_ref = project.frameworks_group.new_file(
+    'System/Library/Frameworks/Vision.framework', :sdk_root
+  )
+  vision_ref.last_known_file_type = 'wrapper.framework'
+  target.frameworks_build_phase.add_file_reference(vision_ref)
+  puts 'Vision.framework added to Link Binary With Libraries ✓'
+else
+  puts 'Vision.framework already linked'
+end
+
 project.save
 puts 'xcodeproj saved ✓'
