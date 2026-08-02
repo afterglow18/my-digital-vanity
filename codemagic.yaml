@@ -57,7 +57,7 @@ workflows:
           npx cap add ios
           npx cap sync ios
 
-      - name: Inject PhotoCleanup Vision plugin into Xcode project
+      - name: Inject local plugins into Xcode project
         script: |
           NATIVE_SRC="artifacts/outfit-generator/native"
           IOS_APP="artifacts/outfit-generator/ios/App/App"
@@ -73,7 +73,23 @@ workflows:
           cp "$NATIVE_SRC/PhotoCleanupPlugin.m" "$IOS_APP/"
           echo "Copied PhotoCleanupPlugin.m"
 
-          # ── Step 2: add both files to the Xcode project ──────────────────────
+          # VisionPlugin.swift  — on-device image classification (VNClassifyImageRequest)
+          #                       and OCR (VNRecognizeTextRequest) for wardrobe search
+          # VisionPlugin.m      — ObjC CAP_PLUGIN macro that registers the plugin
+          #                       with the Capacitor bridge under the JS name "Vision".
+          cp "$NATIVE_SRC/VisionPlugin.swift" "$IOS_APP/"
+          echo "Copied VisionPlugin.swift"
+          cp "$NATIVE_SRC/VisionPlugin.m" "$IOS_APP/"
+          echo "Copied VisionPlugin.m"
+
+          # MyViewController.swift — CAPBridgeViewController subclass that calls
+          #                          registerPluginInstance() for both local plugins
+          #                          on capacitorDidLoad().  Overwrites the stub that
+          #                          cap add ios may generate.
+          cp "$NATIVE_SRC/MyViewController.swift" "$IOS_APP/"
+          echo "Copied MyViewController.swift"
+
+          # ── Step 2: add all files to the Xcode project ───────────────────────
           ruby codemagic_scripts/add_to_xcodeproj.rb
 
       - name: Add export compliance and privacy keys to Info.plist

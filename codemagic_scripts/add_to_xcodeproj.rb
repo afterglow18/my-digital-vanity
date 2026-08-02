@@ -1,10 +1,12 @@
 #!/usr/bin/env ruby
-# Adds PhotoCleanupPlugin.swift and PhotoCleanupPlugin.m to the Xcode
-# project's App target so the compiler picks them up without manual edits.
+# Adds local plugin source files to the Xcode project's App target so the
+# compiler picks them up without manual edits.
 #
-# The .m file contains the CAP_PLUGIN macro that registers the plugin with
-# the Capacitor ObjC bridge under the JS name "PhotoCleanup".  Without it
-# the bridge cannot dispatch processPhoto() calls to the Swift class.
+# Files handled:
+#   PhotoCleanupPlugin.swift / .m  — background-removal + Vision plugin
+#   VisionPlugin.swift / .m        — on-device image classification & OCR
+#   MyViewController.swift         — CAPBridgeViewController subclass that
+#                                    registers both local plugins on launch
 require 'xcodeproj'
 
 def find_group_with_file(group, filename)
@@ -26,7 +28,9 @@ raise "Could not find App source group" unless app_group
 
 puts "Using group: #{app_group.path}"
 
-['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m'].each do |fname|
+['PhotoCleanupPlugin.swift', 'PhotoCleanupPlugin.m',
+ 'VisionPlugin.swift',       'VisionPlugin.m',
+ 'MyViewController.swift'].each do |fname|
   in_build = target.source_build_phase.files.any? { |bf| bf.file_ref&.path == fname }
   if in_build
     puts "  #{fname} already in build phase"
