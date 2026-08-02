@@ -193,6 +193,7 @@ export default function FavoritesPage() {
             key={detailsItem.id}
             item={detailsItem}
             onClose={handleDetailsClose}
+            showAddToLookbook
           />
         )}
       </AnimatePresence>

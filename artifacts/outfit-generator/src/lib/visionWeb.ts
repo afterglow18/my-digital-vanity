@@ -16,7 +16,13 @@
  */
 
 export const WEB_VISION_VERSION = 4;
-export const WEB_EMPTY_VERSION  = 5;
+/**
+ * 6 = analysed correctly but photo has no foreground colors (truly empty — do NOT retry).
+ * Note: value 5 was used in a previous build where the indexer passed a raw storage key
+ * instead of a resolved URL, causing all analysis to fail silently.  Items at v=5 must
+ * be retried; they are NOT treated as "correctly empty".
+ */
+export const WEB_EMPTY_VERSION  = 6;
 
 // Maximum Euclidean RGB distance to consider a pixel "background"
 const BG_TOLERANCE = 35;
