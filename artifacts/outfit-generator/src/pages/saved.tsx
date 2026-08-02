@@ -235,7 +235,7 @@ export default function SavedPage() {
               setSearchQuery(e.target.value);
               if (e.target.value.trim()) pageTopRef.current?.scrollIntoView({ behavior: "instant" });
             }}
-            placeholder="Search…"
+            placeholder="Search by name, category, or notes…"
             className="w-full pl-10 pr-9 py-2.5 border-2 border-black rounded-full text-sm font-medium
                        bg-white focus:outline-none focus:ring-2 focus:ring-primary placeholder:text-black/35"
           />
