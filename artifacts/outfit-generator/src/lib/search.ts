@@ -17,6 +17,99 @@ function tokenize(text: string | null | undefined): string[] {
   return text.toLowerCase().split(/[\s,./\\-]+/).filter(Boolean);
 }
 
+/**
+ * Color synonym map: maps a natural-language color word to the canonical label(s)
+ * produced by the canvas color extractor.  Expansion is one-way (query only) so
+ * no re-indexing of stored items is needed.
+ */
+const COLOR_SYNONYMS: Record<string, string[]> = {
+  // Pinks / reds
+  rose:       ['pink'],
+  blush:      ['pink'],
+  bubblegum:  ['pink'],
+  fuchsia:    ['pink', 'purple'],
+  magenta:    ['pink', 'purple'],
+  crimson:    ['red'],
+  scarlet:    ['red'],
+  cherry:     ['red'],
+  ruby:       ['red'],
+  wine:       ['red', 'purple'],
+  burgundy:   ['red', 'purple'],
+  maroon:     ['red', 'brown'],
+  mauve:      ['pink', 'purple'],
+  // Oranges / corals
+  coral:      ['pink', 'orange'],
+  salmon:     ['pink', 'orange'],
+  peach:      ['orange', 'beige'],
+  terracotta: ['orange', 'brown'],
+  rust:       ['orange', 'brown'],
+  // Yellows / golds
+  gold:       ['yellow'],
+  golden:     ['yellow'],
+  champagne:  ['gold', 'beige'],
+  mustard:    ['yellow'],
+  lemon:      ['yellow'],
+  // Greens
+  olive:      ['green'],
+  sage:       ['green'],
+  mint:       ['green'],
+  forest:     ['green'],
+  lime:       ['green'],
+  emerald:    ['green'],
+  hunter:     ['green'],
+  // Blues / teals
+  navy:       ['blue'],
+  cobalt:     ['blue'],
+  royal:      ['blue'],
+  sky:        ['blue'],
+  turquoise:  ['teal', 'blue'],
+  aqua:       ['teal', 'blue'],
+  cyan:       ['teal', 'blue'],
+  // Purples
+  lavender:   ['purple'],
+  lilac:      ['purple'],
+  violet:     ['purple'],
+  plum:       ['purple'],
+  indigo:     ['purple', 'blue'],
+  // Neutrals / skin tones
+  nude:       ['beige'],
+  ivory:      ['white', 'beige'],
+  cream:      ['white', 'beige'],
+  off:        ['white'],       // "off-white"
+  ecru:       ['beige'],
+  sand:       ['beige', 'tan'],
+  camel:      ['tan', 'brown'],
+  khaki:      ['tan', 'beige'],
+  taupe:      ['tan', 'grey'],
+  mocha:      ['brown'],
+  chocolate:  ['brown'],
+  espresso:   ['brown'],
+  // Greys / blacks / whites
+  charcoal:   ['grey'],
+  slate:      ['grey'],
+  silver:     ['grey'],
+  ash:        ['grey'],
+  onyx:       ['black'],
+  jet:        ['black'],
+};
+
+/**
+ * Expand query tokens with color synonyms.
+ * Each token that appears in the synonym map is kept AND its canonical equivalents
+ * are added, so "rose" becomes ["rose", "pink"].
+ * Duplicate tokens are removed.
+ */
+export function expandTokens(tokens: string[]): string[] {
+  const expanded = new Set<string>(tokens);
+  for (const token of tokens) {
+    const synonyms = COLOR_SYNONYMS[token];
+    if (synonyms) {
+      for (const s of synonyms) expanded.add(s);
+    }
+  }
+  return Array.from(expanded);
+}
+
 function matchScore(tokens: string[], fieldValue: string | null | undefined, weight: number): number {
   if (!fieldValue) return 0;
   const lower = fieldValue.toLowerCase();
@@ -85,7 +178,7 @@ export function searchLookbook(
   items: ClothingItem[],
   outfits: SavedOutfit[],
 ): SearchResults {
-  const tokens = tokenize(query);
+  const tokens = expandTokens(tokenize(query));
   if (tokens.length === 0) return { items: [], groups: [] };
 
   // Score and filter items
