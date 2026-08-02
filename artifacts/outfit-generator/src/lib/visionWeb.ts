@@ -17,12 +17,14 @@
 
 export const WEB_VISION_VERSION = 4;
 /**
- * 6 = analysed correctly but photo has no foreground colors (truly empty — do NOT retry).
- * Note: value 5 was used in a previous build where the indexer passed a raw storage key
- * instead of a resolved URL, causing all analysis to fail silently.  Items at v=5 must
- * be retried; they are NOT treated as "correctly empty".
+ * 7 = analysed correctly (correct URL + correct canvas draw) but photo has no foreground
+ * colors worth indexing — do NOT retry.
+ *
+ * History of sentinel values — all must be retried because they were set by buggy code:
+ *   5 — indexer passed raw storage key instead of resolved URL (URL bug)
+ *   6 — indexer passed correct URL but canvas drew a blank (double-Image bug)
  */
-export const WEB_EMPTY_VERSION  = 6;
+export const WEB_EMPTY_VERSION  = 7;
 
 // Maximum Euclidean RGB distance to consider a pixel "background"
 const BG_TOLERANCE = 35;
@@ -136,15 +138,14 @@ export async function extractWebVisionLabels(
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return { labels: [], version: WEB_EMPTY_VERSION };
 
+    // Load the image once and reuse the same element for drawImage.
+    const img = new Image();
     await new Promise<void>((resolve, reject) => {
-      const img = new Image();
       img.onload  = () => resolve();
       img.onerror = reject;
       img.src = imageUrl;
     });
 
-    const img = new Image();
-    img.src = imageUrl;
     ctx.drawImage(img, 0, 0, 48, 48);
 
     const { data } = ctx.getImageData(0, 0, 48, 48);
