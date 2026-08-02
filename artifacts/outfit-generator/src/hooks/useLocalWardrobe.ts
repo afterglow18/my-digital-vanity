@@ -14,6 +14,7 @@ import {
   dbDeleteClothing,
   dbGetWardrobeStats,
 } from '@/lib/db';
+import { analyzeSingleItemVision } from '@/lib/visionAnalysis';
 import type {
   ClothingItem,
   CreateClothingData,
@@ -64,7 +65,17 @@ export function useCreateClothingItem() {
   const qc = useQueryClient();
   return useMutation<ClothingItem, Error, { data: CreateClothingData }>({
     mutationFn: ({ data }) => dbCreateClothing(data),
-    onSuccess: () => {
+    onSuccess: async (newItem) => {
+      // Immediately analyze the new item's photo so vision search works right
+      // away without waiting for the next cold-start indexer run.
+      if (newItem.imageObjectPath) {
+        try {
+          const result = await analyzeSingleItemVision(newItem.imageObjectPath);
+          await dbUpdateClothing(newItem.id, result);
+        } catch {
+          // Silent failure — useVisionIndexer will retry on next app launch
+        }
+      }
       qc.invalidateQueries({ queryKey: ['clothing'] });
     },
   });

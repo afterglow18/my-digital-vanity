@@ -3,7 +3,6 @@
  *
  * On mount, finds all clothing items that haven't been analysed yet and
  * processes them one at a time with a 350 ms delay so the UI stays responsive.
- * Shows a non-blocking "Preparing photo search…" toast while running.
  *
  * Version scheme (matches visionWeb.ts constants):
  *   0 = unanalyzed
