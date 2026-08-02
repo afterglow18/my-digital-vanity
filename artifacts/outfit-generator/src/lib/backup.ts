@@ -1,77 +1,154 @@
 /**
- * Backup service — exports all wardrobe data to a JSON file
- * and imports it back.
+ * Backup / restore — exports all clothing items, outfits, and images as a
+ * ZIP file; imports from a previously exported ZIP.
  *
- * Format: JSON file (vanity-backup-<date>.json) containing clothing
- * items, outfits, and outfit_items. Images are embedded as data URLs.
+ * Export on iOS: writes the ZIP to the cache directory then opens the iOS
+ * share sheet so the user can save to Files, iCloud Drive, AirDrop, etc.
+ * Export on web: triggers a browser download (dev convenience).
  *
- * On native iOS: shares the file via the native share sheet.
- * On web: triggers a browser download.
+ * Import: reads a ZIP picked via <input type="file">, restores items/outfits
+ * to localStorage and images to the Capacitor Filesystem.
  */
 
-import { dbExportAll, dbImportAll, type ExportPayload } from './db';
-import { Capacitor } from '@capacitor/core';
+import JSZip from "jszip";
+import { Capacitor } from "@capacitor/core";
+import { getAllClothingItems, getAllStoredOutfits } from "./db";
+import { listImages, restoreImage } from "./imageStorage";
 
 // ── Export ────────────────────────────────────────────────────────────────────
 
 export async function exportBackup(): Promise<void> {
-  const payload = await dbExportAll();
-  const json = JSON.stringify(payload, null, 2);
-  const filename = `vanity-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const zip = new JSZip();
+
+  const metadata = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    clothingItems: getAllClothingItems(),
+    outfits: getAllStoredOutfits(),
+    tier: localStorage.getItem("mdc_tier") ?? "free",
+    seq: localStorage.getItem("mdc_seq") ?? "0",
+  };
+  zip.file("wardrobe.json", JSON.stringify(metadata, null, 2));
+
+  // Images — native only (web has no persistent images to back up)
+  if (Capacitor.isNativePlatform()) {
+    const images = await listImages();
+    if (images.length > 0) {
+      const imgFolder = zip.folder("images")!;
+      for (const { filename, data } of images) {
+        imgFolder.file(filename, data, { base64: true });
+      }
+    }
+  }
+
+  const blob = await zip.generateAsync({ type: "blob" });
+  const dateStr = new Date().toISOString().split("T")[0];
+  const filename = `my-closet-backup-${dateStr}.zip`;
 
   if (Capacitor.isNativePlatform()) {
-    await exportNative(json, filename);
-  } else {
-    exportWeb(json, filename);
-  }
-}
+    const { Filesystem, Directory } = await import("@capacitor/filesystem");
+    const { Share } = await import("@capacitor/share");
 
-async function exportNative(json: string, filename: string): Promise<void> {
-  try {
-    const { Filesystem, Directory } = await import('@capacitor/filesystem');
-    const { Share } = await import('@capacitor/share');
-
-    const path = `vanity-exports/${filename}`;
+    const base64 = await blobToBase64(blob);
     await Filesystem.writeFile({
-      path,
-      data: json,
+      path: filename,
+      data: base64,
       directory: Directory.Cache,
-      encoding: 'utf8' as Parameters<typeof Filesystem.writeFile>[0]['encoding'],
-      recursive: true,
     });
-
-    const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
-
+    const { uri } = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
     await Share.share({
-      title: 'My Digital Vanity Backup',
+      title: "My Digital Closet Backup",
       url: uri,
-      dialogTitle: 'Save or share your vanity backup',
+      dialogTitle: "Save or share your wardrobe backup",
     });
-  } catch (err) {
-    console.error('Native export failed, falling back to web:', err);
-    exportWeb(json, filename);
+  } else {
+    // Web dev — trigger download
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
-}
-
-function exportWeb(json: string, filename: string): void {
-  const blob = new Blob([json], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
 
-export async function importBackup(file: File): Promise<void> {
-  const text = await file.text();
-  const payload = JSON.parse(text) as ExportPayload;
+export interface ImportResult {
+  itemCount: number;
+  outfitCount: number;
+}
 
-  if (!payload.version || !Array.isArray(payload.clothing)) {
-    throw new Error('Invalid backup file format');
+export async function importBackup(file: File): Promise<ImportResult> {
+  const arrayBuffer = await file.arrayBuffer();
+  const zip = await JSZip.loadAsync(arrayBuffer);
+
+  const metadataFile = zip.file("wardrobe.json");
+  if (!metadataFile) throw new Error("Invalid backup file — wardrobe.json not found.");
+
+  const metadata = JSON.parse(await metadataFile.async("string")) as {
+    version: number;
+    clothingItems?: unknown[];
+    outfits?: unknown[];
+    tier?: string;
+    seq?: string;
+  };
+
+  if (!metadata.version || !Array.isArray(metadata.clothingItems)) {
+    throw new Error("Unrecognised backup format.");
   }
 
-  await dbImportAll(payload);
+  // Restore images (native only)
+  if (Capacitor.isNativePlatform()) {
+    const imagesFolder = zip.folder("images");
+    if (imagesFolder) {
+      const tasks: Promise<void>[] = [];
+      imagesFolder.forEach((relativePath, file) => {
+        if (!file.dir) {
+          tasks.push(
+            file.async("base64").then((base64) => restoreImage(relativePath, base64)),
+          );
+        }
+      });
+      await Promise.allSettled(tasks);
+    }
+  }
+
+  // Restore metadata
+  localStorage.setItem("mdc_clothing_items", JSON.stringify(metadata.clothingItems ?? []));
+  localStorage.setItem("mdc_outfits", JSON.stringify(metadata.outfits ?? []));
+
+  // Restore sequence counter
+  if (metadata.seq) {
+    localStorage.setItem("mdc_seq", String(metadata.seq));
+  } else {
+    const allIds = [
+      ...(metadata.clothingItems ?? []).map((i) => (i as { id: number }).id ?? 0),
+      ...(metadata.outfits ?? []).map((o) => (o as { id: number }).id ?? 0),
+    ];
+    localStorage.setItem("mdc_seq", String(allIds.length ? Math.max(...allIds) : 0));
+  }
+
+  // Restore tier (only trusted values)
+  if (metadata.tier === "unlock" || metadata.tier === "premium") {
+    localStorage.setItem("mdc_tier", metadata.tier);
+  }
+
+  return {
+    itemCount: (metadata.clothingItems ?? []).length,
+    outfitCount: (metadata.outfits ?? []).length,
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }

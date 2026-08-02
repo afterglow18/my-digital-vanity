@@ -1,0 +1,36 @@
+No errors uploading archive at '/Users/builder/clone/build/ipa/App.ipa'.
+
+Find application entry from App Store Connect for uploaded binary
+Found 1 App matching specified filters: bundleId=********.
+-- App --
+Id: 6789233372
+Type: apps
+Bundle id: ********
+Name: My Digital Closet:
+Primary locale: en-US
+Sku: MYDIGITALCLOSET001
+Content rights declaration: DOES_NOT_USE_THIRD_PARTY_CONTENT
+Is or ever was made for kids: False
+Subscription status url: https://api.revenuecat.com/v1/incoming-webhooks/apple-server-to-server-notification/fQjniHBqfnyFPXwjdYLYNNfmORrgQEzr
+Subscription status url for sandbox: https://api.revenuecat.com/v1/incoming-webhooks/apple-server-to-server-notification/fQjniHBqfnyFPXwjdYLYNNfmORrgQEzr
+Subscription status url version: V2
+Subscription status url version for sandbox: V2
+
+Find uploaded build
+Build has finished uploading but is not available in App Store Connect yet. Could not find the build matching the uploaded version, waiting 30 seconds to try again. Timeout in 10 minutes.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.
+Could not find the build matching the uploaded version, waiting 30 seconds to try again.

@@ -1,125 +1,124 @@
 /**
  * backgroundRemoval.ts
  *
- * On-device background removal via @imgly/background-removal (JS/WASM).
- * Works in WKWebView (Capacitor iOS), regular browsers, and Android.
- * No native plugins, no CocoaPods, no iOS-version gating.
+ * On-device background removal powered by @imgly/background-removal —
+ * a pure JS/WebAssembly library that runs inside WKWebView (Capacitor iOS)
+ * with no native plugins, no CocoaPods, and no native registration required.
  *
- * The ONNX model (~15 MB) downloads once from the imgly CDN on first use,
- * then is cached permanently by the browser / WKWebView cache.
+ * How it works:
+ *  • On first use the library downloads ONNX model + WASM runtime from the
+ *    imgly CDN (~15 MB for "medium" quality). WKWebView caches them between
+ *    app launches, so subsequent uses are instant.
+ *  • Inference runs fully on-device — photos never leave the user's phone.
+ *  • Falls back gracefully to the original image if anything fails.
+ *
+ * Works on: iOS 15+ (WKWebView), Android, and regular browsers.
  */
+
 import { removeBackground as imglyRemoveBackground } from "@imgly/background-removal";
 
+// ── ONNX Runtime configuration ────────────────────────────────────────────────
+//
+// Problem: @imgly/background-removal runs ONNX inference on the main JS thread
+// by default, freezing the entire UI (no taps, no React updates) for several
+// seconds. ONNX Runtime Web has a wasm.proxy = true flag that moves inference
+// into a sub-worker — but imgly unconditionally resets it to false internally
+// right before creating the session (it only enables the proxy for WebGPU,
+// which iOS Safari/WKWebView doesn't have).
+//
+// Fix (three parts):
+//  1. Object.defineProperty with a no-op setter so imgly's `proxy = false`
+//     write is silently swallowed and the value stays true.
+//  2. numThreads = 1 — iOS Safari has no SharedArrayBuffer, so WASM
+//     multi-threading causes a silent crash.
+//  3. Dynamic import() so onnxruntime-web is never parsed at module load time,
+//     which would trigger Vite pre-bundling mid-session and reload the page.
+
+let ortConfigured = false;
+
+async function configureOrt(): Promise<void> {
+  if (ortConfigured) return;
+  ortConfigured = true;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore — onnxruntime-web types aren't resolved via dynamic import
+  const ort = await import("onnxruntime-web");
+  Object.defineProperty(ort.env.wasm, "proxy", {
+    get: () => true,
+    set: () => {},   // blocks imgly from resetting it to false
+    configurable: true,
+  });
+  ort.env.wasm.numThreads = 1; // iOS Safari: no SharedArrayBuffer → must be 1
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
 export type RemovalProgress =
-  | { stage: "loading"; pct: number }
-  | { stage: "inferring" }
+  | { stage: "loading"; pct: number }   // downloading model / WASM
+  | { stage: "inferring" }              // running the segmentation model
   | { stage: "done" };
 
-/** Always true — JS/WASM works on every platform. */
+// ── Public API ────────────────────────────────────────────────────────────────
+
+/**
+ * Always returns true — the JS library works on every platform.
+ * Kept for API compatibility with the old native-plugin version.
+ */
 export async function isBackgroundRemovalSupported(): Promise<boolean> {
   return true;
 }
 
 /**
- * Configure ONNX Runtime Web to run inference in a proxy worker thread.
- *
- * THREE things are required — any one missing and the main thread blocks:
- *
- * 1. Object.defineProperty to lock proxy=true.
- *    @imgly/background-removal sets ort.env.wasm.proxy = false right before
- *    it creates each inference session (it only enables proxy for WebGPU).
- *    A plain assignment gets overwritten. Using Object.defineProperty with a
- *    no-op setter makes imgly's write silently ignored so the value stays true.
- *
- * 2. numThreads = 1.
- *    iOS Safari has no SharedArrayBuffer, which WASM multithreading requires.
- *    Threads > 1 causes a silent crash. Single-threaded avoids it.
- *
- * 3. Dynamic import() — NOT a top-level import.
- *    Importing onnxruntime-web at module parse time triggers Vite's dependency
- *    pre-bundling mid-session, causing a full page reload that corrupts React's
- *    internal dispatcher. Dynamic import() defers the load to the moment
- *    inference is first requested, after everything is stable.
+ * Returns an empty string (no error) — kept for API compatibility.
  */
-let ortConfigured = false;
-async function configureOrt(): Promise<void> {
-  if (ortConfigured) return;
-  ortConfigured = true;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore — onnxruntime-web exports mismatch in TS, works at runtime
-  const ort = await import("onnxruntime-web");
-  Object.defineProperty(ort.env.wasm, "proxy", {
-    get: () => true,
-    set: () => {},        // blocks imgly from setting it back to false
-    configurable: true,  // allows re-configuration if ever needed
-  });
-  ort.env.wasm.numThreads = 1; // iOS Safari has no SharedArrayBuffer
+export async function getBackgroundRemovalError(): Promise<string> {
+  return "";
 }
 
 /**
  * Remove the background from a JPEG/PNG data-URL.
  * Returns a PNG data-URL with a transparent background.
- * Throws only on network error (first model download) or unreadable image.
  *
- * Progress stages:
- *  - "loading"   — model files are downloading (pct = 0–99). On cache hits this
- *                  completes instantly and callers will never see it.
- *  - "inferring" — all model files are resident; ONNX is running inference.
- *  - "done"      — result blob is ready.
+ * Throws only if the library itself throws (network error on first load,
+ * or a completely unreadable image). QuickAddSheet catches and falls back.
+ *
+ * @param dataUrl   Base64 data-URL of the source image
+ * @param onProgress Optional progress callback
  */
 export async function removeBackground(
   dataUrl: string,
   onProgress?: (p: RemovalProgress) => void,
 ): Promise<string> {
-  // Configure the proxy worker before the first inference session is created.
+  // Configure ONNX Runtime once before first inference (proxy + threads).
+  // Must happen before imglyRemoveBackground creates its session.
   await configureOrt();
 
   onProgress?.({ stage: "loading", pct: 0 });
+
+  // Convert data-URL to Blob — the library accepts Blob directly
   const sourceBlob = await dataUrlToBlob(dataUrl);
 
-  // Per-key byte tracking so we can compute an accurate overall download %.
-  // The imgly library calls progress(key, current, total) for each model file
-  // it fetches. On a warm cache the callback fires immediately with
-  // current === total for every key, so the inferred stage is entered at once.
-  const keyTotals: Record<string, number> = {};
-  const keyLoaded: Record<string, number> = {};
-  let emittedInferring = false;
+  onProgress?.({ stage: "inferring" });
 
+  // imgly library: returns a Blob with transparent PNG
   const resultBlob = await imglyRemoveBackground(sourceBlob, {
-    // isnet_fp16 = half-precision model — good balance of quality and speed.
-    // Valid values: "isnet" | "isnet_fp16" | "isnet_quint8"
+    // Use the imgly CDN for ONNX model + WASM runtime.
+    // WKWebView caches these between launches so first-load is ~15 MB once.
+    // The default CDN is used when publicPath is omitted in v1.7.
     model: "isnet_fp16",
     output: {
       format: "image/png",
       quality: 0.9,
     },
-    // publicPath omitted — defaults to the static imgly CDN, which WKWebView
-    // can reach. To self-host, copy files from
-    // node_modules/@imgly/background-removal/dist/ to public/bgremoval/ and
-    // set publicPath: import.meta.env.BASE_URL + "bgremoval/"
-    progress: onProgress
-      ? (key: string, current: number, total: number) => {
-          if (total <= 0) return;
-          keyTotals[key] = total;
-          keyLoaded[key] = current;
-          const totalBytes  = Object.values(keyTotals).reduce((a, b) => a + b, 0);
-          const loadedBytes = Object.values(keyLoaded).reduce((a, b) => a + b, 0);
-          const pct = Math.min(99, Math.round((loadedBytes / totalBytes) * 100));
-          if (pct >= 99 && !emittedInferring) {
-            emittedInferring = true;
-            onProgress({ stage: "inferring" });
-          } else if (!emittedInferring) {
-            onProgress({ stage: "loading", pct });
-          }
-        }
-      : undefined,
   });
 
   onProgress?.({ stage: "done" });
+
   return blobToDataUrl(resultBlob);
 }
 
-/** Blob → base64 data-URL */
+// ── Helpers shared with QuickAddSheet ─────────────────────────────────────────
+
+/** Convert a Blob to a base64 data-URL string. */
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -129,7 +128,7 @@ export function blobToDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** base64 data-URL → Blob */
+/** Convert a data-URL string back to a Blob (e.g. to pass to saveImage). */
 export async function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
   return res.blob();

@@ -1,83 +1,63 @@
 /**
- * RevenueCat authenticated client via Replit Connectors SDK.
- * Returns a client object compatible with @replit/revenuecat-sdk functions.
+ * Creates a RevenueCat API client authenticated via the Replit connectors proxy.
+ * Not cached — fetch fresh each call so tokens never go stale.
  */
 import { ReplitConnectors } from "@replit/connectors-sdk";
+import { createClient } from "@replit/revenuecat-sdk/client";
 
-const BASE_PATH = "/v2";
-
-function resolveUrl(template: string, params?: Record<string, string>): string {
-  let url = template;
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      url = url.replace(`{${key}}`, encodeURIComponent(String(value)));
-    }
-  }
-  return BASE_PATH + url;
-}
-
-async function makeRequest(
-  connectors: ReplitConnectors,
-  method: string,
-  opts: { url: string; path?: Record<string, string>; query?: Record<string, unknown>; body?: unknown },
-): Promise<{ data: unknown; error: unknown; response: Response }> {
-  let url = resolveUrl(opts.url, opts.path);
-
-  if (opts.query) {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(opts.query)) {
-      if (v !== undefined && v !== null) qs.append(k, String(v));
-    }
-    const str = qs.toString();
-    if (str) url += "?" + str;
-  }
-
-  const fetchOpts: RequestInit = { method };
-  if (opts.body !== undefined) {
-    fetchOpts.body = JSON.stringify(opts.body);
-    fetchOpts.headers = { "Content-Type": "application/json" };
-  }
-
-  const response = (await connectors.proxy("revenuecat", url, fetchOpts)) as Response;
-  const text = await response.text();
-
-  let data: unknown = null;
-  let error: unknown = null;
-
-  try {
-    const parsed = JSON.parse(text);
-    if (response.ok) {
-      data = parsed;
-    } else {
-      error = parsed;
-    }
-  } catch {
-    if (response.ok) {
-      data = text;
-    } else {
-      error = { message: text, status: response.status };
-    }
-  }
-
-  return { data, error, response };
-}
-
-// Type that matches what @replit/revenuecat-sdk functions expect
-type SdkClient = {
-  get:    (opts: any) => Promise<{ data: any; error: any; response: Response }>;
-  post:   (opts: any) => Promise<{ data: any; error: any; response: Response }>;
-  put:    (opts: any) => Promise<{ data: any; error: any; response: Response }>;
-  patch:  (opts: any) => Promise<{ data: any; error: any; response: Response }>;
-  delete: (opts: any) => Promise<{ data: any; error: any; response: Response }>;
-};
-
-export async function getUncachableRevenueCatClient(): Promise<SdkClient> {
+export async function getUncachableRevenueCatClient() {
   const connectors = new ReplitConnectors();
-  return {
-    get:    (opts) => makeRequest(connectors, "GET",    opts),
-    post:   (opts) => makeRequest(connectors, "POST",   opts),
-    put:    (opts) => makeRequest(connectors, "PUT",    opts),
-    patch:  (opts) => makeRequest(connectors, "PATCH",  opts),
-    delete: (opts) => makeRequest(connectors, "DELETE", opts),
+
+  // The SDK may pass a Request object (with method/body embedded) or a plain
+  // URL string + init options.  Extract everything from both sources.
+  const customFetch: typeof fetch = async (input, init) => {
+    // ── URL ──────────────────────────────────────────────────────────────────
+    const urlStr =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : (input as Request).url;
+
+    const urlObj = new URL(urlStr);
+    const path   = urlObj.pathname + urlObj.search;
+
+    // ── Method ───────────────────────────────────────────────────────────────
+    // Prefer init.method, fall back to the method embedded in the Request obj.
+    const method =
+      init?.method ??
+      (input instanceof Request && !(input instanceof URL) ? (input as Request).method : "GET");
+
+    // ── Body ─────────────────────────────────────────────────────────────────
+    let body: unknown;
+    if (init?.body) {
+      body = typeof init.body === "string" ? JSON.parse(init.body) : init.body;
+    } else if (
+      input instanceof Request &&
+      !(input instanceof URL) &&
+      (input as Request).body
+    ) {
+      const raw = await (input as Request).text();
+      body = raw ? JSON.parse(raw) : undefined;
+    }
+
+    // ── Proxy call ────────────────────────────────────────────────────────────
+    const resp = await connectors.proxy("revenuecat", path, {
+      method: method as string,
+      ...(body !== undefined ? { body } : {}),
+    });
+
+    // connectors.proxy returns a Response — read and re-wrap so the body is
+    // not consumed before the SDK reads it (some versions clone internally).
+    const text = await (resp as Response).text();
+    return new Response(text, {
+      status: (resp as Response).status,
+      headers: { "Content-Type": "application/json" },
+    });
   };
+
+  return createClient({
+    baseUrl: "https://api.revenuecat.com/v2",
+    fetch: customFetch,
+  });
 }

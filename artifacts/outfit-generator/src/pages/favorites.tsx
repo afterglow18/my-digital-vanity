@@ -11,8 +11,8 @@ import {
   useListClothing,
   useUpdateClothingItem,
   getListClothingQueryKey,
-} from "@/hooks/useLocalWardrobe";
-import type { ClothingItem } from "@/types/local";
+  ClothingItem,
+} from "@/lib/local-api";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
 import { ItemDetailsSheet } from "@/components/clothing/ItemDetailsSheet";
@@ -187,6 +187,7 @@ export default function FavoritesPage() {
         </div>
       )}
 
+      {/* Item details sheet — opened from favorites, so show Add to Lookbook */}
       <AnimatePresence>
         {detailsItem && (
           <ItemDetailsSheet

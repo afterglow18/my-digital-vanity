@@ -1,32 +1,35 @@
 /**
  * QuickAddSheet
  *
- * On native iOS — always shows comparison after photo capture:
+ * Upload flow:
+ *   pick ──(file chosen)──► uploading ──► close
  *
- *   pick ──(file chosen)──► cleaning ──► comparing ──► uploading ──► close
+ * Images are encoded to JPEG (≤2048 px) and saved to Capacitor Filesystem
+ * (Documents dir) via imageStorage.ts — no server upload required.
  *
- * "cleaning"  — Vision processes the photo on-device (~1-3 s)
- * "comparing" — user sees Original vs Cleaned side by side before saving
- *               If Vision fails, Cleaned panel shows a graceful unavailable state
- *               "Retake" button sends the user back to pick
- *
- * On web — photos save immediately (Vision not available).
- * Multi-file upload — photos save immediately (no comparison step).
+ * Camera:
+ *   On native iOS/iPadOS, uses @capacitor/camera (Camera.getPhoto) which
+ *   presents the picker correctly as a popover on iPad and handles permissions.
+ *   Falls back to <input capture> only on web.
  */
 import React, { useRef, useState, useCallback, useEffect } from "react";
-import { flushSync } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Capacitor } from "@capacitor/core";
-import { Camera } from "@capacitor/camera";
-import { X, Loader2, Check, Sparkles, GripHorizontal } from "lucide-react";
-import { useCreateClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
-import type { ClothingItem } from "@/types/local";
+import { X, Loader2, Check, RotateCcw } from "lucide-react";
+import {
+  removeBackground,
+  blobToDataUrl,
+  dataUrlToBlob,
+} from "@/lib/backgroundRemoval";
+import {
+  useCreateClothingItem,
+  getListClothingQueryKey,
+} from "@/lib/local-api";
 import { useQueryClient } from "@tanstack/react-query";
-import { encodeToPng } from "@/lib/processImage";
-import { removeBackground } from "@/lib/backgroundRemoval";
-import type { RemovalProgress } from "@/lib/backgroundRemoval";
-import { PhotoCompareSheet } from "@/components/clothing/PhotoCompareSheet";
-import { buildRetryStripState, buildRetryThumbMap, resolveThumbnails, reorderStrip } from "@/lib/retryStripHelpers";
+import { saveImage } from "@/lib/imageStorage";
+import type { ClothingItem } from "@/lib/local-api";
+import { Camera, CameraResultType, CameraSource } from "@capacitor/camera";
+import type { GalleryImageOptions } from "@capacitor/camera";
+import { Capacitor } from "@capacitor/core";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -39,62 +42,80 @@ const CATEGORY_LABELS: Record<Category, string> = {
   fragrances: "Fragrance",
 };
 
-type Phase = "pick" | "encoding" | "preview" | "uploading";
-
-interface UploadProgress { done: number; total: number; }
+type Phase =
+  | "pick"       // two-button landing screen
+  | "encoding"   // photo picked; encoding + initial canvas resize in progress
+  | "preview"    // encoded photo shown; optional background removal
+  | "uploading"; // saving to Filesystem + DB
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-async function fileToThumbnail(file: File): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const canvas = document.createElement("canvas");
-      const SIZE = 120;
-      const scale = Math.min(SIZE / img.naturalWidth, SIZE / img.naturalHeight, 1);
-      canvas.width  = Math.round(img.naturalWidth  * scale);
-      canvas.height = Math.round(img.naturalHeight * scale);
-      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.75));
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(""); };
-    img.src = url;
-  });
-}
-
-async function blobToDataUrl(blob: Blob): Promise<string> {
+/**
+ * Re-encode any image (HEIC, JPEG, PNG, …) to a JPEG capped at 2048 px on the
+ * long edge. Keeps files small for reliable storage and fast display.
+ */
+async function encodeForUpload(input: File | Blob): Promise<Blob> {
   return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(input);
     const img = new Image();
-    const url = URL.createObjectURL(blob);
+
     img.onload = () => {
       URL.revokeObjectURL(url);
+
+      if (!img.naturalWidth || !img.naturalHeight) {
+        reject(new Error(`Image decoded with 0 dimensions (type: ${input.type || "unknown"})`));
+        return;
+      }
+
+      const MAX_DIM = 2048;
+      const scale = Math.min(1, MAX_DIM / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.round(img.naturalWidth  * scale);
+      const h = Math.round(img.naturalHeight * scale);
+
       const canvas = document.createElement("canvas");
-      const scale  = Math.min(1, 800 / img.naturalWidth);
-      canvas.width  = Math.round(img.naturalWidth  * scale);
-      canvas.height = Math.round(img.naturalHeight * scale);
-      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.82));
+      canvas.width  = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { reject(new Error("canvas.getContext('2d') returned null")); return; }
+
+      ctx.drawImage(img, 0, 0, w, h);
+
+      canvas.toBlob(
+        (b) => {
+          if (b && b.size > 1000) {
+            resolve(b);
+          } else {
+            reject(new Error(`canvas.toBlob returned ${b?.size ?? 0} bytes — image may be blank`));
+          }
+        },
+        "image/jpeg",
+        0.85,
+      );
     };
-    img.onerror = reject;
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error(`Failed to load image (type: ${input.type || "unknown"}, size: ${input.size} bytes)`));
+    };
+
     img.src = url;
   });
 }
 
-/** Returns true if the error is an IndexedDB / browser storage quota error. */
-function isQuotaError(err: unknown): boolean {
-  if (err instanceof DOMException) {
-    // Standard name check (Firefox, Chrome modern)
-    if (err.name === "QuotaExceededError") return true;
-    // Legacy numeric code (Safari, older Chrome)
-    if (err.code === 22) return true;
-  }
-  if (err instanceof Error) {
-    if (err.name === "QuotaExceededError") return true;
-    if (err.message.toLowerCase().includes("quota")) return true;
-  }
-  return false;
+/**
+ * Returns true if the error represents a user cancellation of the camera picker.
+ * Capacitor throws different messages across versions/platforms.
+ */
+function isCameraCancel(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
+  return (
+    msg.includes("cancel") ||
+    msg.includes("dismiss") ||
+    msg.includes("no image picked") ||
+    msg.includes("user denied") ||
+    msg.includes("user did not") ||
+    msg.includes("no photo")
+  );
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -104,50 +125,53 @@ interface Props {
   onOpenChange:  (open: boolean) => void;
   category:      Category;
   existingCount: number;
+  /** Called with the newly created item after a successful save. */
   onCreated?:    (item: ClothingItem) => void;
 }
 
 const PHOTO_TIPS = [
-  "Photograph individual products or bundle multiple items together.",
-  "Lay everything flat on a plain background.",
-  "Take the photo from directly above.",
-  "Keep all items fully in frame.",
+  "Lay the item flat or hang it neatly.",
+  "Use a plain, consistent background.",
+  "Take the photo directly from the front or above, depending on the item.",
+  "Make sure the entire item is visible.",
 ] as const;
 
 export function QuickAddSheet({ open, onOpenChange, category, existingCount, onCreated }: Props) {
-  const [phase,              setPhase]             = useState<Phase>("pick");
-  const [errorMsg,           setErrorMsg]          = useState<string | null>(null);
-  const [progress,           setProgress]          = useState<UploadProgress | null>(null);
-  const [failedFiles,        setFailedFiles]        = useState<File[]>([]);
-  const [failedThumbnails,   setFailedThumbnails]   = useState<string[]>([]);
-  const [dragIndex,          setDragIndex]          = useState<number | null>(null);
-  // dragOverIndex is tracked in a ref + DOM class so pointer-move doesn't trigger re-renders.
-  const dragOverIndexRef  = useRef<number | null>(null);
-  const dragTargetElRef   = useRef<HTMLElement | null>(null);
-  const thumbRowRef    = useRef<HTMLDivElement>(null);
-  const autoScrollRef  = useRef<number | null>(null);
+  const [phase,    setPhase]    = useState<Phase>("pick");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Comparison state
-  const [originalDataUrl, setOriginalDataUrl] = useState<string>("");
-  const [cleanedDataUrl,  setCleanedDataUrl]  = useState<string>("");
-  const [hadSubject,      setHadSubject]      = useState(false);
-  const [cleanupError,    setCleanupError]    = useState<string | null>(null);
-  const pendingMeta = useRef<{ countOffset: number } | null>(null);
-  // Generation counter — each new photo bumps this; every async step checks it
-  // before writing state so a slow first removal never clobbers a fast second one.
-  const bgGenRef = useRef(0);
+  // Preview phase state
+  const [originalBlob, setOriginalBlob] = useState<Blob | null>(null);
+  const [originalUrl,  setOriginalUrl]  = useState<string | null>(null);
+  const [cleanedBlob,  setCleanedBlob]  = useState<Blob | null>(null);
+  const [cleanedUrl,   setCleanedUrl]   = useState<string | null>(null);
+  // JS/WASM background removal works on every platform — always true.
+  const bgSupported = true;
   const [bgProcessing, setBgProcessing] = useState(false);
-  const [removalProgress, setRemovalProgress] = useState<RemovalProgress | null>(null);
+  const [bgFailed,     setBgFailed]     = useState(false);
+  // Which version the user has selected — defaults to 'cleaned' once ready
+  const [selected, setSelected] = useState<"original" | "cleaned">("original");
 
-  // Batch-upload queue: populated when the user selects multiple photos.
-  // Each entry is the next file to show in the compare screen and its name countOffset.
-  // Using a ref (not state) so handleCompareSelect/handleRetake never go stale.
-  const batchQueueRef = useRef<Array<{ file: File; offset: number }>>([]);
-  const [batchTotal, setBatchTotal] = useState(0); // 0 = single-photo mode
-  const [batchDone,  setBatchDone]  = useState(0); // photos saved so far in current batch
+  // Generation counter — incremented each time handleFile is called.
+  // Every async background-removal chain captures its own generation at start;
+  // if the counter has advanced by the time an await resolves, a newer photo
+  // has been taken and this result is stale — discard it rather than clobbering
+  // the current photo's state.
+  const bgGenRef = useRef(0);
 
-  const [showAbandonConfirm, setShowAbandonConfirm] = useState(false);
+  // Multi-photo queue — populated when the user selects several files at once.
+  // fileQueueRef holds the blobs; queueIdxRef is the current position.
+  // queueIdx/queueTotal are display-only state mirrors of those refs.
+  const fileQueueRef  = useRef<Blob[]>([]);
+  const queueIdxRef   = useRef(0);
+  const [queueIdx,   setQueueIdx]   = useState(0);
+  const [queueTotal, setQueueTotal] = useState(0);
 
+  // Clean up object URLs when they change
+  useEffect(() => { return () => { if (originalUrl) URL.revokeObjectURL(originalUrl); }; }, [originalUrl]);
+  useEffect(() => { return () => { if (cleanedUrl)  URL.revokeObjectURL(cleanedUrl);  }; }, [cleanedUrl]);
+
+  // Only used as a fallback on web (non-native) — native uses Camera.getPhoto
   const cameraInputRef  = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -177,404 +201,268 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
   const createItem  = useCreateClothingItem();
   const queryClient = useQueryClient();
 
-  // ── Drag-to-reorder handlers for failed thumbnail strip ───────────────────
-
-  /**
-   * Applies the drag-over highlight directly to the DOM without triggering a
-   * React re-render. Stores the currently highlighted element in a ref so the
-   * previous highlight can be efficiently removed on the next call.
-   */
-  const applyDragTarget = useCallback((idx: number | null, activeDragIdx: number | null) => {
-    // Remove highlight from the previously highlighted element.
-    if (dragTargetElRef.current) {
-      dragTargetElRef.current.classList.remove("is-drag-target");
-      dragTargetElRef.current = null;
-    }
-    dragOverIndexRef.current = idx;
-    if (idx === null || !thumbRowRef.current) return;
-    const children = Array.from(thumbRowRef.current.children) as HTMLElement[];
-    const el = children[idx];
-    // Only highlight when it's a different slot than the item being dragged.
-    if (el && activeDragIdx !== idx) {
-      el.classList.add("is-drag-target");
-      dragTargetElRef.current = el;
-    }
-  }, []);
-
-  const handleThumbPointerDown = useCallback((idx: number) => (e: React.PointerEvent<HTMLDivElement>) => {
-    e.currentTarget.setPointerCapture(e.pointerId);
-    setDragIndex(idx);
-    applyDragTarget(idx, idx); // same slot → no highlight yet
-  }, [applyDragTarget]);
-
-  const handleThumbRowPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if (dragIndex === null || !thumbRowRef.current) return;
-    const container = thumbRowRef.current;
-    const containerRect = container.getBoundingClientRect();
-
-    // ── Auto-scroll when pointer is near the left or right edge ──────────────
-    const SCROLL_ZONE  = 56; // px from edge that triggers scrolling
-    const SCROLL_SPEED = 10; // px per animation frame
-
-    if (autoScrollRef.current !== null) {
-      cancelAnimationFrame(autoScrollRef.current);
-      autoScrollRef.current = null;
-    }
-
-    let delta = 0;
-    if (e.clientX < containerRect.left + SCROLL_ZONE) {
-      delta = -SCROLL_SPEED;
-    } else if (e.clientX > containerRect.right - SCROLL_ZONE) {
-      delta = SCROLL_SPEED;
-    }
-
-    if (delta !== 0) {
-      const tick = () => {
-        if (!thumbRowRef.current) return;
-        thumbRowRef.current.scrollLeft += delta;
-        autoScrollRef.current = requestAnimationFrame(tick);
-      };
-      autoScrollRef.current = requestAnimationFrame(tick);
-    }
-
-    // ── Hit-test: getBoundingClientRect() is in viewport coords, matching clientX ──
-    // Update highlight directly in the DOM — no setState, no re-render.
-    const children = Array.from(container.children) as HTMLElement[];
-    for (let i = 0; i < children.length; i++) {
-      const rect = children[i].getBoundingClientRect();
-      if (e.clientX >= rect.left && e.clientX <= rect.right) {
-        if (dragOverIndexRef.current !== i) {
-          applyDragTarget(i, dragIndex);
-        }
-        break;
-      }
-    }
-  }, [dragIndex, applyDragTarget]);
-
-  const stopAutoScroll = useCallback(() => {
-    if (autoScrollRef.current !== null) {
-      cancelAnimationFrame(autoScrollRef.current);
-      autoScrollRef.current = null;
-    }
-  }, []);
-
-  /** Cancel an in-progress drag without reordering (Escape or pointer cancel). */
-  const cancelDrag = useCallback(() => {
-    stopAutoScroll();
-    applyDragTarget(null, null);
-    setDragIndex(null);
-  }, [stopAutoScroll, applyDragTarget]);
-
-  // Cancel the drag when the user presses Escape.
-  useEffect(() => {
-    if (dragIndex === null) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") cancelDrag();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dragIndex, cancelDrag]);
-
-  const handleThumbRowPointerUp = useCallback(() => {
-    stopAutoScroll();
-    const overIdx = dragOverIndexRef.current;
-    if (dragIndex !== null && overIdx !== null && dragIndex !== overIdx) {
-      setFailedFiles(prev => reorderStrip(prev, dragIndex, overIdx));
-      setFailedThumbnails(prev => reorderStrip(prev, dragIndex, overIdx));
-    }
-    applyDragTarget(null, null);
-    setDragIndex(null);
-  }, [dragIndex, stopAutoScroll, applyDragTarget]);
-
-  const confirmClose = useCallback(() => {
-    bgGenRef.current += 1;   // cancel any in-flight removal
-    setBgProcessing(false);  // MUST reset — close can happen mid-removal
-    setRemovalProgress(null);
-    setShowAbandonConfirm(false);
+  // ── Reset ────────────────────────────────────────────────────────────────
+  const handleClose = useCallback(() => {
+    // Advance generation so any in-flight background removal discards its result
+    bgGenRef.current += 1;
+    // Clear the queue so stale files don't process after close
+    fileQueueRef.current = [];
+    queueIdxRef.current  = 0;
+    setQueueIdx(0);
+    setQueueTotal(0);
     setPhase("pick");
     setErrorMsg(null);
-    setProgress(null);
-    setFailedFiles([]);
-    setFailedThumbnails([]);
-    setOriginalDataUrl("");
-    setCleanedDataUrl("");
-    setHadSubject(false);
-    setCleanupError(null);
-    pendingMeta.current = null;
-    batchQueueRef.current = [];
-    setBatchTotal(0);
-    setBatchDone(0);
+    setOriginalBlob(null);
+    setOriginalUrl(null);
+    setCleanedBlob(null);
+    setCleanedUrl(null);
+    setBgProcessing(false);  // must reset — close can happen mid-removal
+    setBgFailed(false);
+    setSelected("original");
     onOpenChange(false);
   }, [onOpenChange]);
 
-  const handleClose = useCallback(() => {
-    if (failedFiles.length > 0) {
-      setShowAbandonConfirm(true);
-      return;
-    }
-    confirmClose();
-  }, [failedFiles.length, confirmClose]);
-
-  const saveDataUrl = useCallback(async (dataUrl: string, countOffset: number): Promise<true | false | "quota"> => {
-    const label    = CATEGORY_LABELS[category];
-    const n        = existingCount + countOffset + 1;
-    const autoName = n === 1 ? label : `${label} ${n}`;
-    return new Promise<true | false | "quota">((resolve) => {
-      createItem.mutate(
-        { data: { name: autoName, category, imageObjectPath: dataUrl } },
-        {
-          onSuccess: (createdItem) => {
-            queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-            if (onCreated) onCreated(createdItem);
-            resolve(true);
-          },
-          onError: (err) => resolve(isQuotaError(err) ? "quota" : false),
-        },
-      );
-    });
-  }, [category, existingCount, createItem, queryClient, onCreated]);
-
-  /**
-   * Single-file handler: switches to "encoding" immediately so the user sees a
-   * spinner right away, then shows the preview screen as soon as the original is
-   * ready. Background removal runs in the background while the user can already
-   * see and interact with the preview.
-   *
-   * Generation counter (bgGenRef) ensures that if the user picks a second photo
-   * before the first removal finishes, the stale result is silently discarded.
-   */
-  const handleFile = useCallback(async (file: File, countOffset = 0): Promise<void> => {
+  // ── File picked → encode → show preview + auto background removal ────────
+  const handleFile = useCallback(async (file: File | Blob) => {
     setErrorMsg(null);
+
+    // Show the "encoding" loading screen immediately — before any async work —
+    // so the user sees a full-screen spinner rather than a blank or frozen pick screen.
     const myGen = ++bgGenRef.current;
-    setOriginalDataUrl("");
-    setCleanedDataUrl("");
-    setHadSubject(false);
-    setCleanupError(null);
+    setOriginalBlob(null);
+    setOriginalUrl(null);
+    setCleanedBlob(null);
+    setCleanedUrl(null);
+    setBgFailed(false);
     setBgProcessing(false);
-    // Switch to "encoding" BEFORE any await — gives instant feedback.
+    setSelected("original");
     setPhase("encoding");
 
-    let png: Blob;
+    let jpeg: Blob;
     try {
-      png = await encodeToPng(file);
+      jpeg = await encodeForUpload(file);
+      console.log(`[quickadd] encoded → JPEG ${jpeg.size}B`);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[quickadd] encode failed:", msg);
       if (bgGenRef.current !== myGen) return;
-      console.error("[QuickAdd] PNG encoding failed:", err);
-      setErrorMsg("Could not read that photo. Please try again.");
+      setErrorMsg(`Could not read the photo: ${msg}`);
       setPhase("pick");
       return;
     }
     if (bgGenRef.current !== myGen) return;
 
-    const origDataUrl = await blobToDataUrl(png);
     if (bgGenRef.current !== myGen) return;
 
-    // flushSync forces React to process setOriginalDataUrl synchronously —
-    // the in-DOM <img> inside the compare sheet gets its src RIGHT NOW while
-    // the encoding spinner overlay is still covering it. Without this, React
-    // batches setOriginalDataUrl + setPhase("preview") into one render, the
-    // spinner disappears, and WebKit decodes the bitmap with nothing showing.
-    pendingMeta.current = { countOffset };
-    flushSync(() => setOriginalDataUrl(origDataUrl));
-    if (bgGenRef.current !== myGen) return;
-
-    // img.decode() waits for the FULL bitmap decode, not just header parsing.
-    // new Image().onload fires after headers (intrinsic size known) but before
-    // the pixel data is ready — that's why the previous approach didn't work.
-    // After decode() resolves the image is ready to paint in the next frame.
-    const img = new Image();
-    img.src = origDataUrl;
-    await img.decode().catch(() => {});
-    if (bgGenRef.current !== myGen) return;
-
-    // Spinner overlay removed — compare sheet underneath is already decoded.
+    // Encoding done — show the original and switch to the comparison screen
+    const url = URL.createObjectURL(jpeg);
+    setOriginalBlob(jpeg);
+    setOriginalUrl(url);
     setPhase("preview");
 
-    // Background removal runs while the user already sees the original.
-    setBgProcessing(true);
-    setRemovalProgress({ stage: "loading", pct: 0 });
+    // Kick off background removal (JS/WASM — works on every platform).
+    // Generation already captured above; stale results are discarded.
     try {
-      const cleanedUrl = await removeBackground(origDataUrl, (p) => {
-        if (bgGenRef.current === myGen) setRemovalProgress(p);
-      });
+      const dataUrl  = await blobToDataUrl(jpeg);
+      if (bgGenRef.current !== myGen) return; // newer photo taken — bail out
+
+      const resultUrl = await removeBackground(dataUrl);
       if (bgGenRef.current !== myGen) return;
-      setCleanedDataUrl(cleanedUrl);
-      setHadSubject(true);
+
+      const resultBlob   = await dataUrlToBlob(resultUrl);
+      const resultObjUrl = URL.createObjectURL(resultBlob);
+      if (bgGenRef.current !== myGen) { URL.revokeObjectURL(resultObjUrl); return; }
+
+      setCleanedBlob(resultBlob);
+      setCleanedUrl(resultObjUrl);
+      setSelected("cleaned"); // default to the cleaned version
     } catch (err) {
-      if (bgGenRef.current !== myGen) return;
-      console.warn("[BackgroundRemoval] Failed:", err);
-      setCleanupError("Clean Up couldn't run on this photo.");
+      if (bgGenRef.current !== myGen) return; // stale — ignore
+      console.warn("[quickadd] background removal failed silently:", err);
+      setBgFailed(true);
     } finally {
-      if (bgGenRef.current === myGen) {
-        setBgProcessing(false);
-        setRemovalProgress(null);
-      }
+      // Only clear the spinner for our own generation; a newer photo's
+      // setBgProcessing(true) must not be cancelled by our finally block.
+      if (bgGenRef.current === myGen) setBgProcessing(false);
     }
   }, []);
 
-  /**
-   * Direct-save handler used only for the retry path (re-saving photos that
-   * previously failed to write to storage). Encodes and saves the original —
-   * no compare screen, no background removal. The user already chose their
-   * preferred version when the photo was first added.
-   */
-  const handleFileDirect = useCallback(async (file: File, countOffset: number): Promise<true | false | "quota"> => {
-    let png: Blob;
-    try {
-      png = await encodeToPng(file);
-    } catch {
-      return false;
-    }
-    try {
-      const dataUrl = await blobToDataUrl(png);
-      return saveDataUrl(dataUrl, countOffset);
-    } catch {
-      return false;
-    }
-  }, [saveDataUrl]);
-
-  const handleCompareSelect = useCallback(async (chosenDataUrl: string) => {
-    // Use meta for the countOffset; fall back to 0 so saving always proceeds even if
-    // the ref was unexpectedly null (e.g. user saved original while removal was running).
-    const countOffset = pendingMeta.current?.countOffset ?? 0;
-    pendingMeta.current = null;
-    bgGenRef.current += 1;  // cancel any still-running removal
-    setBgProcessing(false);
+  // ── Save the chosen version → Filesystem + DB ────────────────────────────
+  const handleSave = useCallback(async () => {
+    const blob = selected === "cleaned" && cleanedBlob ? cleanedBlob : originalBlob;
+    if (!blob) return;
+    setErrorMsg(null);
     setPhase("uploading");
-    setProgress({ done: 0, total: 1 });
-    const result = await saveDataUrl(chosenDataUrl, countOffset);
-    setProgress({ done: 1, total: 1 });
-    if (result !== true) {
-      setPhase("preview");
-      setProgress(null);
-      setErrorMsg(
-        result === "quota"
-          ? "Your device storage is full — free up space and try again."
-          : "Could not save the photo. Please try again.",
-      );
-      return;
-    }
-    // Advance to the next photo in the batch, or close if done.
-    const next = batchQueueRef.current.shift();
-    if (next) {
-      setBatchDone(d => d + 1);
-      await handleFile(next.file, next.offset);
-    } else {
-      setBatchTotal(0);
-      setBatchDone(0);
-      handleClose();
-    }
-  }, [saveDataUrl, handleClose, handleFile]);
 
-  const handleRetake = useCallback(() => {
-    bgGenRef.current += 1;  // cancel in-flight removal
-    setBgProcessing(false);
-    setOriginalDataUrl("");
-    setCleanedDataUrl("");
-    setHadSubject(false);
-    setCleanupError(null);
-    pendingMeta.current = null;
-    // In batch mode: "Skip" — discard this photo and show the next one.
-    // In single mode: "Retake" — go back to the pick screen.
-    const next = batchQueueRef.current.shift();
-    if (next) {
-      setBatchDone(d => d + 1);
-      handleFile(next.file, next.offset);
-    } else {
-      setBatchTotal(0);
-      setBatchDone(0);
-      setPhase("pick");
+    try {
+      const isCleaned = selected === "cleaned" && !!cleanedBlob;
+      const ext        = isCleaned ? "png" : "jpg";
+      const filename   = `${category}-${Date.now()}.${ext}`;
+      const imageObjectPath = await saveImage(blob, filename);
+      console.log(`[quickadd] saved ${isCleaned ? "cleaned PNG" : "original JPEG"} as ${imageObjectPath}`);
+
+      const label    = CATEGORY_LABELS[category];
+      const n        = existingCount + 1;
+      const autoName = n === 1 ? label : `${label} ${n}`;
+
+      await new Promise<void>((resolve, reject) => {
+        createItem.mutate(
+          { data: { name: autoName, category, imageObjectPath } },
+          {
+            onSuccess: (createdItem) => {
+              queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
+              if (onCreated) onCreated(createdItem);
+              resolve();
+            },
+            onError: (err) => {
+              console.error("[quickadd] createItem failed:", err);
+              reject(err);
+            },
+          },
+        );
+      });
+
+      // Advance to the next photo in the queue, or close if done.
+      const nextIdx = queueIdxRef.current + 1;
+      if (nextIdx < fileQueueRef.current.length) {
+        queueIdxRef.current = nextIdx;
+        setQueueIdx(nextIdx);
+        await handleFile(fileQueueRef.current[nextIdx]);
+      } else {
+        handleClose();
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[quickadd] save failed:", msg);
+      setErrorMsg(`Save failed: ${msg}`);
+      setPhase("preview");
     }
+  }, [selected, cleanedBlob, originalBlob, category, existingCount, createItem, queryClient, handleClose, onCreated]);
+
+  // ── Shared native photo helper ─────────────────────────────────────────────
+  // Use CameraResultType.Uri (not DataUrl) — DataUrl encodes the full image as
+  // base64 on-device before returning it, which can silently fail or OOM on iOS
+  // for large images. Uri returns a file path; we fetch webPath as a blob instead.
+  // Width/height are omitted — encodeForUpload() already caps at 2048 px.
+  const openNativePhoto = useCallback(async (source: CameraSource) => {
+    const PHOTO_OPTS = {
+      resultType:         CameraResultType.Uri,
+      quality:            90,
+      correctOrientation: true,
+      allowEditing:       false,
+    };
+    const photo = await Camera.getPhoto({ ...PHOTO_OPTS, source });
+    console.log("[quickadd] photo result:", JSON.stringify({ path: photo.path, webPath: photo.webPath, format: photo.format }));
+    const url = photo.webPath ?? photo.path;
+    if (!url) throw new Error("No photo was returned.");
+    const res  = await fetch(url);
+    const blob = await res.blob();
+    console.log(`[quickadd] fetched blob: ${blob.size}B type=${blob.type}`);
+    await handleFile(blob);
   }, [handleFile]);
 
-  const handleFiles = useCallback(async (
-    files: File[],
-    existingThumbnailMap?: Map<File, string>,
-    isRetry = false,
-  ) => {
-    if (files.length === 0) return;
-    setErrorMsg(null);
+  // ── Permission denied check (run AFTER a failure, not before) ───────────
+  const isPermissionDenied = async (permission: "camera" | "photos"): Promise<boolean> => {
+    try {
+      const perms = await Camera.checkPermissions();
+      return perms[permission] === "denied";
+    } catch {
+      return false;
+    }
+  };
 
-    if (!isRetry) {
-      // New selection — every photo flows through the compare screen one at a time.
-      // Queue photos after the first; handleCompareSelect/handleRetake advance through them.
-      batchQueueRef.current = files.slice(1).map((file, i) => ({ file, offset: i + 1 }));
-      setBatchTotal(files.length > 1 ? files.length : 0);
-      setBatchDone(0);
-      await handleFile(files[0], 0);
+  // ── Take Photo (native: Capacitor Camera; web: <input capture>) ──────────
+  // Let Camera.getPhoto handle the iOS permission prompt internally — calling
+  // requestPermissions() ourselves first causes a view-controller conflict where
+  // the permission dialog hasn't fully dismissed before the camera tries to present.
+  const handleTakePhoto = useCallback(async () => {
+    if (!Capacitor.isNativePlatform()) {
+      cameraInputRef.current?.click();
       return;
     }
+    try {
+      await openNativePhoto(CameraSource.Camera);
+    } catch (err: unknown) {
+      if (isCameraCancel(err)) return;
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const msg = rawMsg.toLowerCase();
+      console.warn("[quickadd] Camera failed:", rawMsg);
 
-    // Retry path — save originals directly, no compare screen.
-    // The user already chose their preferred version when the photo was first added.
-    batchQueueRef.current = [];
-    setBatchTotal(0);
-    setBatchDone(0);
-    setPhase("uploading");
-    setProgress({ done: 0, total: files.length });
-    const succeeded: File[] = [];
-    const errored:   File[] = [];
-    let anyQuotaError = false;
-    for (let i = 0; i < files.length; i++) {
-      setProgress({ done: i, total: files.length });
-      const ok = await handleFileDirect(files[i], i);
-      if (ok === true) {
-        succeeded.push(files[i]);
-      } else {
-        if (ok === "quota") anyQuotaError = true;
-        errored.push(files[i]);
+      // Check if it's a hard permission denial
+      if (msg.includes("denied") || msg.includes("permission") || msg.includes("restricted") || await isPermissionDenied("camera")) {
+        setErrorMsg("Camera access is off. Go to Settings → My Digital Closet → Camera and enable it, then try again.");
+        return;
       }
-    }
-    setProgress(null);
-    const stripState = buildRetryStripState({
-      succeededCount: succeeded.length,
-      failedCount:    errored.length,
-      totalAttempted: files.length,
-      anyQuotaError,
-    });
-    if (stripState.clearFailed) {
-      setFailedFiles([]);
-      setFailedThumbnails([]);
-      handleClose();
-    } else {
-      const thumbs = await resolveThumbnails(errored, existingThumbnailMap, fileToThumbnail);
-      setFailedThumbnails(thumbs);
-      setFailedFiles(errored);
-      setErrorMsg(stripState.errorMsg);
-      setPhase("pick");
-    }
-  }, [handleFile, handleFileDirect, handleClose]);
 
-  /**
-   * On native iOS — calls Camera.pickImages() (PHPickerViewController).
-   * No permission prompt on modern iOS; supports unlimited multi-select.
-   * On web — falls back to the hidden <input multiple> file input.
-   */
-  const handleGalleryPress = useCallback(async () => {
-    if (Capacitor.isNativePlatform()) {
+      // Camera unavailable for another reason — fall back to photo library
       try {
-        const { photos } = await Camera.pickImages({ quality: 90, limit: 0 });
-        if (!photos.length) return;
-        const files = await Promise.all(
-          photos.map(async (photo, i) => {
-            const res  = await fetch(photo.webPath!);
-            const blob = await res.blob();
-            return new File([blob], `gallery_${i}.jpg`, { type: blob.type || "image/jpeg" });
-          }),
-        );
-        if (files.length) handleFiles(files);
-      } catch {
-        // User cancelled the picker — no action needed.
+        await openNativePhoto(CameraSource.Photos);
+      } catch (fallbackErr: unknown) {
+        if (isCameraCancel(fallbackErr)) return;
+        const fbRaw = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        const fbMsg = fbRaw.toLowerCase();
+        console.error("[quickadd] Photo library fallback also failed:", fbRaw);
+        if (fbMsg.includes("denied") || fbMsg.includes("permission") || await isPermissionDenied("photos")) {
+          setErrorMsg("Photo library access is off. Go to Settings → My Digital Closet → Photos and allow access, then try again.");
+        } else {
+          setErrorMsg("Could not open the camera or photo library. Please try again.");
+        }
       }
-    } else {
-      galleryInputRef.current?.click();
     }
-  }, [handleFiles]);
+  }, [openNativePhoto]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // ── Upload Photo (native: Capacitor pickImages multi-select; web: <input>) ──
+  const handleUploadPhoto = useCallback(async () => {
+    if (!Capacitor.isNativePlatform()) {
+      galleryInputRef.current?.click();
+      return;
+    }
+    try {
+      // pickImages allows the user to select multiple photos at once on iOS.
+      const opts: GalleryImageOptions = { quality: 90, correctOrientation: true };
+      const { photos } = await Camera.pickImages(opts);
+      if (!photos || photos.length === 0) return;
+
+      // Fetch each GalleryPhoto as a Blob and load into the queue
+      const blobs: Blob[] = [];
+      for (const photo of photos) {
+        const url = photo.webPath ?? photo.path;
+        if (!url) continue;
+        const res  = await fetch(url);
+        const blob = await res.blob();
+        blobs.push(blob);
+      }
+      if (blobs.length === 0) return;
+
+      fileQueueRef.current = blobs;
+      queueIdxRef.current  = 0;
+      setQueueIdx(0);
+      setQueueTotal(blobs.length);
+      await handleFile(blobs[0]);
+    } catch (err: unknown) {
+      if (isCameraCancel(err)) return;
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const msg = rawMsg.toLowerCase();
+      console.error("[quickadd] Photo library open failed:", rawMsg);
+      if (msg.includes("denied") || msg.includes("permission") || msg.includes("restricted") || await isPermissionDenied("photos")) {
+        setErrorMsg("Photo library access is off. Go to Settings → My Digital Closet → Photos and allow access, then try again.");
+      } else {
+        setErrorMsg("Could not open your photo library. Please try again.");
+      }
+    }
+  }, [openNativePhoto, handleFile]);
+
+  const handleInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    if (files.length) handleFiles(files);
-    e.target.value = "";
+    e.target.value = ""; // allow re-selecting same file
+    if (files.length === 0) return;
+    // Store the whole batch and kick off the first photo.
+    // handleSave will advance through the rest automatically.
+    fileQueueRef.current = files;
+    queueIdxRef.current  = 0;
+    setQueueIdx(0);
+    setQueueTotal(files.length);
+    await handleFile(files[0]);
   };
 
   if (!open) return null;
@@ -589,37 +477,31 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       transition={{ type: "spring", damping: 28, stiffness: 240 }}
       className="fixed inset-0 z-[70] flex flex-col max-w-md mx-auto bg-[#f9f4ee]"
     >
-      {/* Header — hidden during preview (PhotoCompareSheet has its own) */}
-      {phase !== "preview" && (
-        <div
-          className="flex items-center justify-between px-4 pb-3 bg-white border-b-2 border-black flex-shrink-0"
-          style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
-        >
-          <h2 className="font-display font-bold text-xl uppercase tracking-tight">
-            Add {label}
-          </h2>
-          {phase === "pick" && (
-            <button
-              onClick={handleClose}
-              className="w-9 h-9 border-2 border-black rounded-full flex items-center justify-center
-                         bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                         active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
+      {/* Header */}
+      <div
+        className="flex items-center justify-between px-4 pb-3 bg-white border-b-2 border-black flex-shrink-0"
+        style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}
+      >
+        <h2 className="font-display font-bold text-xl uppercase tracking-tight">
+          Add {label}
+        </h2>
+        {(phase === "pick" || phase === "encoding" || phase === "preview") && (
+          <button
+            onClick={handleClose}
+            className="w-9 h-9 border-2 border-black rounded-full flex items-center justify-center
+                       bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                       active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
-      {/* Body — plain conditionals, no AnimatePresence. Any AnimatePresence wrapper
-           around phase conditionals creates an exit-animation window where no child
-           is mounted, producing a blank screen between every phase change regardless
-           of mode, initial, or transition duration. The outer motion.div slide-in is fine. */}
-      <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-
+      {/* Body */}
+      <div className="flex-1 flex flex-col overflow-y-auto">
           {/* ── PICK ── */}
           {phase === "pick" && (
-            <div className="flex flex-col p-5 gap-5 overflow-y-auto">
+            <div className="flex flex-col p-5 gap-5">
               {errorMsg && (
                 <div className="flex flex-col gap-2">
                   <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
@@ -738,8 +620,9 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               )}
 
               <div className="flex gap-3">
+                {/* Take Photo — uses Capacitor Camera on native (iPad-safe) */}
                 <button
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={handleTakePhoto}
                   className="flex-1 flex flex-col items-center justify-center gap-3 py-8
                              border-4 border-black rounded-2xl bg-primary
                              shadow-[5px_5px_0px_0px_rgba(0,0,0,1)]
@@ -753,7 +636,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
                 </button>
 
                 <button
-                  onClick={handleGalleryPress}
+                  onClick={handleUploadPhoto}
                   className="flex-1 flex flex-col items-center justify-center gap-3 py-8
                              border-4 border-black rounded-2xl bg-white
                              shadow-[5px_5px_0px_0px_rgba(0,0,0,1)]
@@ -801,66 +684,154 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
             </div>
           )}
 
-          {/* ── ENCODING / PREVIEW / BATCH-SAVING ────────────────────────────────
-               All three phases share one DOM subtree so PhotoCompareSheet is
-               never unmounted mid-batch. Unmounting it causes the slide-up
-               animation to restart and the spinner to disappear over a
-               half-rendered sheet, producing the white-screen gap the user sees.
-
-               When phase === "uploading" && batchTotal > 0 we are saving a
-               photo between two compare screens. The spinner stays on top (with
-               "Saving…" copy) and the compare sheet stays mounted underneath so
-               there is nothing to re-animate when the next encode begins. */}
-          {(phase === "encoding" || phase === "preview" ||
-            (phase === "uploading" && batchTotal > 0)) && (
-            <div className="flex-1 relative min-h-0 flex flex-col">
-
-              {/* Compare sheet — stays mounted for the lifetime of the batch */}
-              <div className="absolute inset-0 flex flex-col">
-                <PhotoCompareSheet
-                  originalDataUrl={originalDataUrl}
-                  cleanedDataUrl={cleanedDataUrl}
-                  hadSubject={hadSubject}
-                  cleanupError={cleanupError}
-                  bgProcessing={bgProcessing}
-                  removalProgress={removalProgress}
-                  cancelLabel={batchTotal > 0 ? "Skip" : "Retake"}
-                  batchProgress={batchTotal > 0 ? `Photo ${batchDone + 1} of ${batchTotal}` : undefined}
-                  onSelect={handleCompareSelect}
-                  onCancel={handleRetake}
-                />
+          {/* ── ENCODING ── */}
+          {phase === "encoding" && (
+            <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
+              <div className="w-28 h-28 border-4 border-black rounded-3xl bg-white
+                              flex items-center justify-center
+                              shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+                <Loader2 className="w-12 h-12 animate-spin" strokeWidth={1.5} />
               </div>
-
-              {/* Spinner overlay — covers the compare sheet while encoding or
-                  saving. Shows "Processing…" while encoding the next photo and
-                  "Saving…" while writing the chosen version to storage. Removed
-                  only when phase becomes "preview" (image decoded, ready to show). */}
-              {(phase === "encoding" || (phase === "uploading" && batchTotal > 0)) && (
-                <div
-                  className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-5 p-6"
-                  style={{ background: "#f9f4ee" }}
-                >
-                  <div
-                    className="w-28 h-28 rounded-3xl border-4 border-black flex items-center justify-center"
-                    style={{ background: "#FFF0F6", boxShadow: "6px 6px 0 #000" }}
-                  >
-                    <Loader2 className="w-12 h-12 animate-spin" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-display font-bold text-2xl uppercase tracking-tight">
-                      {phase === "uploading" ? "Saving…" : "Processing…"}
-                    </p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {phase === "uploading" ? "Hang on a moment." : "Getting your photo ready"}
-                    </p>
-                  </div>
-                </div>
-              )}
+              <div className="text-center">
+                <p className="font-display font-bold text-2xl uppercase tracking-tight">Processing…</p>
+                <p className="text-sm text-muted-foreground mt-1">Getting your photo ready.</p>
+              </div>
             </div>
           )}
 
-          {/* ── UPLOADING (single photo / retry path only) ── */}
-          {phase === "uploading" && batchTotal === 0 && (
+          {/* ── PREVIEW ── */}
+          {phase === "preview" && (
+            <div className="flex flex-col gap-4 p-5">
+              {errorMsg && (
+                <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-center">
+                  {errorMsg}
+                </p>
+              )}
+
+              {/* ── Side-by-side comparison (always shown) ── */}
+              <div className="flex items-center justify-center gap-2">
+                <p className="text-xs font-bold uppercase tracking-widest text-black/40 text-center">
+                  {bgProcessing ? "This will take a moment…" : bgFailed ? "Original" : "Tap to choose"}
+                </p>
+                {queueTotal > 1 && (
+                  <span className="text-xs font-bold uppercase tracking-widest text-black/30">
+                    · {queueIdx + 1} of {queueTotal}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-3">
+                {/* Original card */}
+                <button
+                  onClick={() => setSelected("original")}
+                  className={`flex-1 flex flex-col gap-2 rounded-2xl border-4 overflow-hidden
+                              transition-all active:scale-[0.97]
+                              ${selected === "original"
+                                ? "border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                                : "border-black/20 opacity-60"}`}
+                >
+                  <div className="relative bg-black">
+                    <img src={originalUrl!} alt="Original" className="w-full object-contain max-h-44" />
+                    {selected === "original" && (
+                      <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black
+                                      flex items-center justify-center">
+                        <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-bold text-xs uppercase tracking-wide text-center pb-2">
+                    Original
+                  </span>
+                </button>
+
+                {/* Cleaned card */}
+                <button
+                  onClick={() => { if (cleanedUrl) setSelected("cleaned"); }}
+                  disabled={!cleanedUrl}
+                  className={`flex-1 flex flex-col gap-2 rounded-2xl border-4 overflow-hidden
+                              transition-all active:scale-[0.97] disabled:cursor-default
+                              ${selected === "cleaned" && cleanedUrl
+                                ? "border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                                : "border-black/20 opacity-60"}`}
+                >
+                  <div className="relative"
+                       style={{ background: "repeating-conic-gradient(#d1d5db 0% 25%, white 0% 50%) 0 0 / 12px 12px" }}>
+                    {cleanedUrl ? (
+                      /* Done — show the result */
+                      <>
+                        <img src={cleanedUrl} alt="Cleaned" className="w-full object-contain max-h-44" />
+                        {selected === "cleaned" && (
+                          <div className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-black
+                                          flex items-center justify-center">
+                            <Check className="w-3 h-3 text-white" strokeWidth={3} />
+                          </div>
+                        )}
+                      </>
+                    ) : bgFailed ? (
+                      /* Removal failed */
+                      <div className="w-full flex flex-col items-center justify-center gap-2 px-3 text-center"
+                           style={{ minHeight: "11rem" }}>
+                        <span className="text-sm font-bold uppercase tracking-wide text-black/40">
+                          Could not remove background
+                        </span>
+                      </div>
+                    ) : (
+                      /* Processing — shown while encoding or running the model */
+                      <div className="w-full flex flex-col items-center justify-center gap-2 text-black/50"
+                           style={{ minHeight: "11rem" }}>
+                        <Loader2 className="w-8 h-8 animate-spin" />
+                        <span className="text-sm font-bold uppercase tracking-wide">Processing</span>
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-bold text-xs uppercase tracking-wide text-center pb-2">
+                    Cleaned ✨
+                  </span>
+                </button>
+              </div>
+
+              {/* Save / Retake or Skip */}
+              <div className="flex gap-3">
+                <button
+                  onClick={queueTotal > 1
+                    ? async () => {
+                        // Skip this photo — advance to next in queue without saving
+                        const nextIdx = queueIdxRef.current + 1;
+                        if (nextIdx < fileQueueRef.current.length) {
+                          queueIdxRef.current = nextIdx;
+                          setQueueIdx(nextIdx);
+                          await handleFile(fileQueueRef.current[nextIdx]);
+                        } else {
+                          handleClose();
+                        }
+                      }
+                    : () => setPhase("pick")}
+                  className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl
+                             border-2 border-black bg-white font-bold text-sm uppercase tracking-wide
+                             shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
+                             active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all"
+                >
+                  <RotateCcw className="w-4 h-4" />
+                  {queueTotal > 1 ? "Skip" : "Retake"}
+                </button>
+                <button
+                  onClick={handleSave}
+                  disabled={bgProcessing && selected === "cleaned"}
+                  className="flex-[2] flex items-center justify-center gap-1.5 py-3 rounded-xl
+                             border-2 border-black bg-primary font-bold text-sm uppercase tracking-wide
+                             shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]
+                             active:translate-x-0.5 active:translate-y-0.5 active:shadow-none
+                             disabled:opacity-50 transition-all"
+                >
+                  <Check className="w-4 h-4" />
+                  {bgProcessing && selected === "cleaned" ? "Processing…" : "Save to Closet"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ── UPLOADING ── */}
+          {phase === "uploading" && (
             <div className="flex-1 flex flex-col items-center justify-center gap-5 p-6">
               <div className="w-28 h-28 border-4 border-black rounded-3xl bg-white
                               flex items-center justify-center shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
@@ -876,7 +847,6 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
               </div>
             </div>
           )}
-
       </div>
 
       {/* Abandon-confirmation overlay */}
@@ -932,6 +902,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
       </AnimatePresence>
 
       {/* Hidden file inputs */}
+      {/* Camera fallback — only used on web; native uses Camera.getPhoto above */}
       <input
         ref={cameraInputRef}
         type="file"
@@ -940,6 +911,7 @@ export function QuickAddSheet({ open, onOpenChange, category, existingCount, onC
         className="hidden"
         onChange={handleInputChange}
       />
+      {/* Gallery — opens photo library / file picker (multiple allowed) */}
       <input
         ref={galleryInputRef}
         type="file"

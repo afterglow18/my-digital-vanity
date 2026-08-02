@@ -1,0 +1,206 @@
+Apple rejected my separate organizing apps under Guideline 4.3(a), so I need to combine them into the existing My Digital Closet app.
+
+Use the current My Digital Closet project as the main app.
+
+I want six separate sections inside one app:
+
+* Closet
+* Handbags
+* Shoes
+* Jewelry
+* Vanity
+* Suitcase
+
+I do not want these turned into one generic collection page with only different labels.
+
+I want each section to keep its own complete current app experience.
+
+When the user taps a section, it should open that app’s current interface and functionality inside the same app.
+
+For example:
+
+* Tapping Closet should open the current Closet app.
+* Tapping Handbags should open the current Handbags app.
+* Tapping Shoes should open the current Shoes app.
+* Tapping Jewelry should open the current Jewelry app.
+* Tapping Vanity should open the current Vanity app.
+* Tapping Suitcase should open the current Suitcase app.
+
+Please preserve each app’s current:
+
+* Background
+* Shelf or row design
+* Categories
+* Icons
+* Buttons
+* Item cards
+* Add-item flow
+* Edit-item flow
+* Item details
+* Search
+* Favorites
+* Photos
+* Animations
+* Empty-state wording
+* Loading wording
+* Premium features
+* Collection-specific functionality
+
+The six sections should feel like the current individual apps, but they must all be contained inside one App Store app and one binary.
+
+Main structure:
+
+1. Add a new main home page or collection hub.
+2. The home page should have six large buttons, cards, or tabs:
+
+* Closet
+* Handbags
+* Shoes
+* Jewelry
+* Vanity
+* Suitcase
+
+3. Tapping each one should open that full section.
+4. Each section should have a clear button to return to the main home page.
+5. Do not open a separate app, external website, webview, or another installed app.
+6. Do not create separate iOS app targets.
+7. Everything must run inside the existing My Digital Closet app.
+
+Technical requirements:
+
+1. Keep the existing My Digital Closet:
+
+* Bundle ID
+* Apple App Store record
+* iOS target
+* RevenueCat API key
+* RevenueCat entitlement
+* Monthly product
+* Yearly product
+* Lifetime product
+* Local SQLite database
+* Photo storage
+* Export/import system
+
+2. Do not create a new RevenueCat project or separate purchase system for each section.
+3. One purchase must unlock premium features across all six sections.
+4. All premium buttons, icons, and features must use one centralized premium-state check.
+5. After a successful purchase or restore:
+
+* Fetch the latest RevenueCat CustomerInfo.
+* Confirm the premium entitlement is active.
+* Update the centralized premium state immediately.
+* Unlock all premium features in every section without requiring an app restart.
+
+6. Fix the Handbags glitter-icon issue.
+
+The glitter icon must unlock immediately after a successful purchase or restore. Remove any separate local, cached, hardcoded, or product-specific lock.
+
+Data structure:
+
+1. Use one SQLite database.
+2. Add a moduleType or collectionType field to every saved item.
+
+Use these values:
+
+* closet
+* handbags
+* shoes
+* jewelry
+* vanity
+* suitcase
+
+3. Each section must only load its own items.
+
+Examples:
+
+* Handbags must not appear in Closet.
+* Shoes must not appear in Jewelry.
+* Vanity products must not appear in Suitcase.
+
+4. Preserve all existing Closet data.
+
+Any existing Closet record without a moduleType or collectionType must automatically be treated as “closet.”
+
+5. Do not delete, reset, or overwrite existing user data.
+6. Update export and import to include moduleType or collectionType.
+7. Older Closet backups that do not contain moduleType must safely import as Closet data.
+
+Code organization:
+
+1. Bring the current Handbags, Shoes, Jewelry, Vanity, and Suitcase screens and assets into the Closet project as separate modules.
+2. Use a folder structure similar to:
+
+* modules/closet
+* modules/handbags
+* modules/shoes
+* modules/jewelry
+* modules/vanity
+* modules/suitcase
+
+3. Preserve the unique UI and behavior of each module.
+4. Shared technical code may be reused where safe, including:
+
+* RevenueCat
+* Premium state
+* Database utilities
+* Photo storage
+* Export/import
+* Common modals
+* Common navigation helpers
+
+5. Do not redesign all six modules into one generic interface.
+6. Do not simply copy six full apps into the project with conflicting duplicate providers, duplicate databases, duplicate purchase systems, or duplicate initialization code.
+7. Resolve duplicate file names, routes, contexts, hooks, styles, database tables, and asset names carefully.
+8. There should only be one app startup flow, one RevenueCat initialization, one database initialization, and one premium provider.
+
+Navigation:
+
+1. Add a main app hub that appears when the app opens.
+2. The user should be able to enter any of the six modules.
+3. Each module should keep its own internal navigation.
+4. Add a consistent Home or Collections button inside every module that returns to the main hub.
+5. Do not use a bottom tab bar if it will interfere with the current app layouts. A home hub with module cards is acceptable.
+6. The navigation should also be expandable so more modules can be added later.
+
+Branding:
+
+1. Keep the App Store app as My Digital Closet for now.
+2. Inside the app, update the main home-page wording to make it clear that the app includes multiple organizers.
+
+Possible heading:
+
+“My Digital Closet”
+
+Possible subtitle:
+
+“Your complete fashion and personal collection organizer”
+
+3. Do not change the bundle ID or create a new App Store listing.
+
+Before making changes, first provide:
+
+* The proposed main hub design
+* The proposed navigation structure
+* The proposed module folder structure
+* The database migration plan
+* How existing Closet data will be protected
+* The RevenueCat consolidation plan
+* A list of files and assets from each existing app that will be moved
+* Any duplicate file names or code conflicts
+* Any risks to the current live Closet app
+
+Then complete the merge.
+
+After completing it, provide:
+
+* A list of every file created
+* A list of every file changed
+* A list of every file moved
+* A list of every database change
+* A list of every RevenueCat change
+* Confirmation that existing Closet data is preserved
+* Confirmation that all six modules run inside one app
+* Confirmation that purchases and restore purchases unlock every module immediately
+* Confirmation that the Handbags glitter icon unlocks after purchase
+* Confirmation that the app builds successfully for both iPhone and iPad

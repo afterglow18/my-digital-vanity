@@ -1,8 +1,7 @@
-- [Background removal pattern](bg-removal-pattern.md) — generation counter + encoding→preview phase order + AnimatePresence config; all required for correct multi-photo behaviour.
-- [Entitlements architecture](entitlements-architecture.md) — tier/limit system + payment provider seam; only runCheckout needs changing when a provider is chosen.
+- [Local-first conversion](local-first-conversion.md) — localStorage DB + Capacitor Filesystem images + RevenueCat purchases; no server/auth at runtime.
+- [Entitlements architecture](entitlements-architecture.md) — tier/limit system + payment provider seam; RevenueCat now wired (purchaseProduct + checkSubscription on mount).
 - [Wardrobe image layout strategy](wardrobe-layout.md) — full-width cover strategy with content-aware height scaling for cross-device fit.
 - [Stripe integration](stripe-integration.md) — credential field name fix, checkout flow design, stripe-replit-sync warning, product seeding.
 - [Auth system](auth-system.md) — JWT/bcrypt auth, no-fallback-secret rule, ownership-before-delete pattern, single useAuth instance via context.
-- [Local-first migration](local-first-migration.md) — IndexedDB replaces API server; all IDs are UUID strings; purchase() stubs RevenueCat.
-- [iOS WebKit carousel clipping](ios-webkit-carousel-clip.md) — overflow/clipPath/translateZ don't clip transformed children on device; use physical inset instead.
-- [Capacitor Swift plugin registration](capacitor-swift-plugin-registration.md) — use CAPBridgeViewController.registerPlugin(_:); CAPBridge.register(pluginClass:withName:) doesn't exist.
+- [Module merge architecture](module-merge-architecture.md) — 6-module merged binary; hub at /, each module isolated IndexedDB + welcome gate; shared types/local.ts; idb package required.
+- [Vision background removal API](vision-bgremoval-api.md) — generateMaskedImage returns CVPixelBuffer not CIImage; wrap with CIImage(cvPixelBuffer:) before CIContext.

@@ -1,8 +1,8 @@
 /**
- * Seed script — creates both purchasable products in Stripe.
+ * Seed script — creates subscription products in Stripe.
  *
- *   • Unlock Forever  — $4.99 one-time  (product_key: 'unlock')
- *   • Pro Stylist     — $9.99 one-time  (product_key: 'premium')
+ *   • My Digital Closet Monthly — $1.99/month  (product_key: 'monthly')
+ *   • My Digital Closet Annual  — $19.99/year  (product_key: 'annual')
  *
  * Idempotent: checks for existing products before creating.
  *
@@ -15,24 +15,24 @@ interface ProductSpec {
   key:         string;
   name:        string;
   description: string;
-  amount:      number;   // cents
+  amount:      number;        // cents
+  interval:    "month" | "year";
 }
 
 const PRODUCTS: ProductSpec[] = [
   {
-    key:         'unlock',
-    name:        'Unlock Forever',
-    description: 'Unlimited wardrobe items and saved outfits. One-time purchase, no subscription.',
-    amount:      499,
+    key:         'monthly',
+    name:        'My Digital Closet – Monthly',
+    description: 'Unlimited wardrobe items and saved outfits. Cancel anytime.',
+    amount:      199,
+    interval:    'month',
   },
   {
-    key:         'premium',
-    name:        'Pro Stylist',
-    description:
-      'Everything in Unlock Forever plus the 360° mannequin outfit view. ' +
-      'Dress a realistic mannequin, rotate it 360°, and see outfits from every angle. ' +
-      'One-time purchase, includes future Pro features.',
-    amount:      999,
+    key:         'annual',
+    name:        'My Digital Closet – Annual',
+    description: 'Unlimited wardrobe items and saved outfits. Best value — 2 months free vs monthly.',
+    amount:      1999,
+    interval:    'year',
   },
 ];
 
@@ -50,7 +50,9 @@ async function seedProduct(stripe: Awaited<ReturnType<typeof getUncachableStripe
     const price   = prices.data[0];
     console.log(`  ✓ Already exists: ${product.name} (${product.id})`);
     if (price) {
-      console.log(`  ✓ Active price:   $${(price.unit_amount! / 100).toFixed(2)} (${price.id})`);
+      const amt = (price.unit_amount! / 100).toFixed(2);
+      const rec = price.recurring ? `/${price.recurring.interval}` : 'one-time';
+      console.log(`  ✓ Active price:   $${amt} ${rec} (${price.id})`);
     }
     return;
   }
@@ -67,9 +69,10 @@ async function seedProduct(stripe: Awaited<ReturnType<typeof getUncachableStripe
     product:     product.id,
     unit_amount: spec.amount,
     currency:    'usd',
+    recurring:   { interval: spec.interval },
     metadata:    { product_key: spec.key },
   });
-  console.log(`  ✓ Created price:   $${(spec.amount / 100).toFixed(2)} one-time (${price.id})`);
+  console.log(`  ✓ Created price:   $${(spec.amount / 100).toFixed(2)}/${spec.interval} (${price.id})`);
 }
 
 async function seed() {
@@ -79,7 +82,7 @@ async function seed() {
     await seedProduct(stripe, spec);
   }
 
-  console.log('\n✅ Done! Stripe will sync products to your database automatically via webhook.');
+  console.log('\n✅ Done! Run this once per environment (test + production).');
 }
 
 seed().catch((err) => {

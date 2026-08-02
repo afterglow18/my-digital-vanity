@@ -1,16 +1,18 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
   useListOutfits,
+  useListClothing,
   useDeleteOutfit,
   useRenameOutfit,
   useAddItemToOutfit,
   useRemoveItemFromOutfit,
-  useLogOutfitUsage,
-  useUndoOutfitUsage,
+  useUpdateClothingItem,
   getListOutfitsQueryKey,
-} from "@/hooks/useLocalOutfits";
-import type { ClothingItem, SavedOutfit } from "@/types/local";
-import { Trash2, Bookmark, Plus, Pencil, Check, X, Calendar, Search } from "lucide-react";
+  getListClothingQueryKey,
+  ClothingItem,
+} from "@/lib/local-api";
+import { Trash2, Bookmark, Plus, Pencil, Check, X, Shirt, Search } from "lucide-react";
+import { search as searchFn } from "@/lib/search";
 import { motion, AnimatePresence } from "framer-motion";
 import { getImageUrl } from "@/lib/utils";
 import { useQueryClient } from "@tanstack/react-query";
@@ -85,10 +87,36 @@ export default function SavedPage() {
   const logOutfitUsage = useLogOutfitUsage();
   const undoOutfitUsage = useUndoOutfitUsage();
   const queryClient = useQueryClient();
+  const updateItem = useUpdateClothingItem();
   const { tier } = useEntitlements();
   const [showUpgrade, setShowUpgrade] = useState(false);
-  const [replacingSlot, setReplacingSlot] = useState<{ outfitId: string; category: SlotKey } | null>(null);
-  const [addingExtra, setAddingExtra]     = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [detailsFromSearch, setDetailsFromSearch] = useState(false);
+  const { data: allItems = [] } = useListClothing({});
+  const [wornTodayIds, setWornTodayIds] = useState<Set<number>>(new Set());
+  // Keep the open details sheet in sync with live item data (e.g. lastWornDate
+  // stamped by "Wearing Today" on an outfit card while the sheet is open).
+  useEffect(() => {
+    if (!detailsItem) return;
+    const fresh = allItems.find((i) => i.id === detailsItem.id);
+    if (fresh && fresh !== detailsItem) setDetailsItem(fresh);
+  }, [allItems]); // eslint-disable-line
+
+  // Scroll to top the instant the user starts searching
+  useEffect(() => { if (searchQuery) window.scrollTo({ top: 0 }); }, [!!searchQuery]); // eslint-disable-line
+
+  // Memoized search results
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return null;
+    return searchFn(searchQuery, allItems, outfits ?? []);
+  }, [searchQuery, allItems, outfits]);
+
+  // Remembers the outfit date before "Wearing Today" so Undo can restore it.
+  const prevWornDatesRef = useRef<Map<number, string | null>>(new Map());
+  // Remembers each item's lastWornDate before "Wearing Today" stamps today on them.
+  // Map<outfitId, Map<itemId, prevDate>>
+  const prevItemWornDatesRef = useRef<Map<number, Map<number, string | null>>>(new Map());
+  const [replacingSlot, setReplacingSlot] = useState<{ outfitId: number; category: SlotKey } | null>(null);
   const [detailsItem, setDetailsItem] = useState<ClothingItem | null>(null);
   const [detailsFromSearch, setDetailsFromSearch] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -184,6 +212,59 @@ export default function SavedPage() {
     );
   };
 
+  /** "YYYY-MM-DD" in the device's local timezone — changes at local midnight. */
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+
+  /** Formats "YYYY-MM-DD" → "M/D/YY" */
+  const formatShortDate = (iso: string) => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return `${m}/${d}/${String(y).slice(2)}`;
+  };
+
+  const handleWearToday = (outfitId: number, items: ClothingItem[], currentLastWornDate?: string | null) => {
+    if (items.length === 0) return;
+    // Remember the old date so Unwear can restore it this session
+    prevWornDatesRef.current.set(outfitId, currentLastWornDate ?? null);
+    // Optimistic: show logged state instantly
+    setWornTodayIds((prev) => new Set([...prev, outfitId]));
+    // Remember each item's previous lastWornDate before overwriting
+    const itemDates = new Map<number, string | null>();
+    items.forEach((item) => itemDates.set(item.id, item.lastWornDate ?? null));
+    prevItemWornDatesRef.current.set(outfitId, itemDates);
+    // Increment every item's wear count and stamp today's date on each
+    items.forEach((item) => {
+      updateItem.mutate({ id: item.id, data: { timesWorn: (item.timesWorn ?? 0) + 1, lastWornDate: todayStr } });
+    });
+    // Persist today's date on the outfit so it survives app restarts
+    renameOutfit.mutate({ id: outfitId, data: { lastWornDate: todayStr } });
+    queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
+  };
+
+  const handleUnwearToday = (outfitId: number, items: ClothingItem[]) => {
+    // Restore the date that was showing before "Wearing This Today" was tapped
+    const restoredDate = prevWornDatesRef.current.get(outfitId) ?? null;
+    prevWornDatesRef.current.delete(outfitId);
+    // Remove optimistic state
+    setWornTodayIds((prev) => {
+      const next = new Set(prev);
+      next.delete(outfitId);
+      return next;
+    });
+    // Decrement every item's wear count and restore their previous lastWornDate
+    const itemDates = prevItemWornDatesRef.current.get(outfitId);
+    prevItemWornDatesRef.current.delete(outfitId);
+    items.forEach((item) => {
+      const prevDate = itemDates?.get(item.id) ?? null;
+      updateItem.mutate({ id: item.id, data: { timesWorn: Math.max(0, (item.timesWorn ?? 1) - 1), lastWornDate: prevDate } });
+    });
+    // Restore the previous date (or null if it was never worn before)
+    renameOutfit.mutate({ id: outfitId, data: { lastWornDate: restoredDate } });
+    queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
+  };
+
   const handlePickedItem = (item: ClothingItem) => {
     if (replacingSlot == null) return;
     addItemToOutfit.mutate(
@@ -251,7 +332,114 @@ export default function SavedPage() {
         </div>
       </header>
 
-      {atLimit && !isLoading && !isSearching && (
+      {/* ── Search bar ── */}
+      <div className="relative mb-4">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-black/40 pointer-events-none" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by name, category, or notes…"
+          className="w-full pl-9 pr-9 py-2.5 rounded-full border-2 border-black bg-white text-sm font-medium
+                     focus:outline-none focus:ring-2 focus:ring-primary shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                     placeholder:text-black/30 placeholder:font-normal"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center
+                       rounded-full bg-black/10 hover:bg-black/20 transition-colors"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+
+      {/* ── Search results ── */}
+      {searchResults && (
+        <div className="flex flex-col gap-6">
+          {searchResults.items.length === 0 && searchResults.groups.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-sm font-bold text-black/40 uppercase tracking-wide">No results</p>
+              <p className="text-xs text-black/30 mt-1">Try a different search term</p>
+            </div>
+          ) : (
+            <>
+              {searchResults.items.length > 0 && (
+                <div>
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-3">Items</h3>
+                  <div className="flex flex-col gap-2">
+                    {searchResults.items.map(({ item }) => (
+                      <button
+                        key={item.id}
+                        onClick={() => { setDetailsFromSearch(true); setDetailsItem(item); }}
+                        className="flex items-center gap-3 bg-white border-2 border-black rounded-xl p-3
+                                   shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                                   active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all text-left"
+                      >
+                        <div
+                          className="w-12 h-12 border border-black/20 rounded overflow-hidden flex-shrink-0"
+                          style={{ background: '#FDECEF' }}
+                        >
+                          {item.imageObjectPath ? (
+                            <img src={getImageUrl(item.imageObjectPath)!} alt={item.name} className="w-full h-full object-contain" />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                              <span className="text-lg opacity-30">👚</span>
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm truncate">{item.name || '—'}</p>
+                          <p className="text-[10px] font-bold uppercase tracking-wide text-black/40">{item.category}</p>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {searchResults.groups.length > 0 && (
+                <div>
+                  <h3 className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-3">Saved Looks</h3>
+                  <div className="flex flex-col gap-2">
+                    {searchResults.groups.map(({ outfit }) => (
+                      <button
+                        key={outfit.id}
+                        onClick={() => setSearchQuery('')}
+                        className="flex items-center gap-3 bg-white border-2 border-black rounded-xl p-3
+                                   shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                                   active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all text-left"
+                      >
+                        <div className="flex gap-1 flex-shrink-0">
+                          {(outfit.items ?? []).slice(0, 3).map((ti) => (
+                            <div
+                              key={ti.id}
+                              className="w-10 h-10 border border-black/20 rounded overflow-hidden"
+                              style={{ background: '#FDECEF' }}
+                            >
+                              {ti.imageObjectPath ? (
+                                <img src={getImageUrl(ti.imageObjectPath)!} alt={ti.name} className="w-full h-full object-contain" />
+                              ) : (
+                                <div className="w-full h-full" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                        <p className="flex-1 font-display font-bold text-sm uppercase tracking-tight truncate">
+                          {outfit.name}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Normal content (hidden during search) ── */}
+      {!searchResults && atLimit && !isLoading && (
         <motion.div
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -263,101 +451,17 @@ export default function SavedPage() {
           </p>
           <button
             onClick={() => setShowUpgrade(true)}
-            className="w-full py-2.5 rounded-lg border-2 border-black bg-black text-white
+            className="w-full py-2.5 rounded-lg border-2 border-black bg-primary text-black
                        font-bold uppercase text-xs tracking-wide
-                       shadow-[2px_2px_0px_0px_rgba(0,0,0,0.3)]
+                       shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
                        active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
           >
-            Unlock Forever – $4.99
+            Lifetime Unlock – $9.99
           </button>
         </motion.div>
       )}
 
-      {/* ── Search results ── */}
-      {isSearching && (
-        <div className="flex flex-col gap-6">
-          {/* Items section */}
-          {searchResults.items.length > 0 && (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-2">Items</p>
-              <div className="bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden divide-y divide-black/10">
-                {searchResults.items.map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => { setDetailsItem(item); setDetailsFromSearch(true); }}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-black/5 active:bg-black/10 transition-colors text-left"
-                  >
-                    <div className="w-12 h-12 border-2 border-black overflow-hidden rounded shrink-0"
-                         style={{ background: "#FDECEF" }}>
-                      {item.imageObjectPath ? (
-                        <img src={getImageUrl(item.imageObjectPath)!} alt={item.name}
-                             className="w-full h-full object-contain" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <span className="text-[9px] font-bold text-black/30">—</span>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex flex-col items-start min-w-0">
-                      <span className="text-sm font-bold truncate w-full">{item.name}</span>
-                      <span className="text-[10px] font-bold uppercase text-black/40">{item.category}</span>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Groups section */}
-          {searchResults.groups.length > 0 && (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-black/40 mb-2">Groups</p>
-              <div className="bg-white border-2 border-black rounded-xl shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] overflow-hidden divide-y divide-black/10">
-                {searchResults.groups.map((outfit) => {
-                  const thumbItems = (outfit.items ?? []).slice(0, 3);
-                  return (
-                    <button
-                      key={outfit.id}
-                      onClick={() => setSearchQuery("")}
-                      className="w-full flex items-center gap-3 px-4 py-3 hover:bg-black/5 active:bg-black/10 transition-colors text-left"
-                    >
-                      <div className="flex gap-0.5 shrink-0">
-                        {Array.from({ length: 3 }).map((_, i) => {
-                          const t = thumbItems[i];
-                          return (
-                            <div key={i} className="w-11 h-11 border-2 border-black overflow-hidden"
-                                 style={{ background: "#FDECEF" }}>
-                              {t?.imageObjectPath && (
-                                <img src={getImageUrl(t.imageObjectPath)!} alt={t.name}
-                                     className="w-full h-full object-contain" />
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <span className="flex-1 font-display font-bold text-sm uppercase tracking-tight truncate">
-                        {outfit.name}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* No results */}
-          {searchResults.items.length === 0 && searchResults.groups.length === 0 && (
-            <div className="flex flex-col items-center justify-center text-center py-16 gap-2">
-              <Search className="w-8 h-8 text-black/20" />
-              <p className="text-sm font-bold text-black/40 uppercase">No results</p>
-              <p className="text-xs text-black/30">Try a different search term.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ── Normal view ── */}
-      {!isSearching && isLoading ? (
+      {!searchResults && (isLoading ? (
         <div className="flex flex-col gap-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-52 bg-muted animate-pulse border-2 border-black rounded-xl" />
@@ -403,7 +507,7 @@ export default function SavedPage() {
                         maxLength={60}
                         className="flex-1 font-display font-bold text-lg uppercase tracking-tight bg-white/60 border-2 border-black rounded-lg px-2 py-0.5 outline-none min-w-0"
                       />
-                      <button type="submit" className="w-7 h-7 flex items-center justify-center bg-white border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0">
+                      <button type="submit" className="w-7 h-7 flex items-center justify-center bg-primary border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0">
                         <Check className="w-3.5 h-3.5" />
                       </button>
                     </form>
@@ -418,7 +522,7 @@ export default function SavedPage() {
                   )}
                   <button
                     onClick={() => handleDelete(outfit.id)}
-                    className="w-8 h-8 flex items-center justify-center bg-white border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:translate-x-0.5 active:shadow-none hover:bg-destructive/10 transition-colors shrink-0"
+                    className="w-8 h-8 flex items-center justify-center bg-primary border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-colors shrink-0"
                     data-testid={`button-delete-outfit-${outfit.id}`}
                   >
                     <Trash2 className="w-3.5 h-3.5" />
@@ -439,7 +543,7 @@ export default function SavedPage() {
                         placeholder="Add notes…"
                         className="flex-1 text-xs border-2 border-black rounded-lg px-2 py-1.5 resize-none outline-none focus:ring-2 focus:ring-primary bg-white"
                       />
-                      <button type="submit" className="self-start w-7 h-7 flex items-center justify-center bg-black text-white border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0">
+                      <button type="submit" className="self-start w-7 h-7 flex items-center justify-center bg-primary text-black border-2 border-black rounded-full shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] shrink-0">
                         <Check className="w-3.5 h-3.5" />
                       </button>
                     </form>
@@ -542,45 +646,63 @@ export default function SavedPage() {
                   </div>
                 </div>
 
-                {/* Footer */}
-                <div className="px-3 pb-3 pt-2 border-t border-black/10 flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide">
-                      {outfit.items?.length ?? 0} product{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
-                    </span>
-                    {outfit.lastUsedDate && (
-                      <span className="text-[10px] text-black/45 font-medium">
-                        Last used: {formatLastUsed(outfit.lastUsedDate)}
-                      </span>
+                {/* Footer: Wearing This Today + item count */}
+                <div className="px-3 pb-3 pt-1 flex items-center justify-between gap-2 border-t border-black/10">
+                  <span className="text-[10px] font-bold uppercase text-muted-foreground tracking-wide shrink-0">
+                    {outfit.items?.length ?? 0} piece{(outfit.items?.length ?? 0) !== 1 ? "s" : ""}
+                  </span>
+                  <AnimatePresence mode="wait">
+                    {(wornTodayIds.has(outfit.id) || outfit.lastWornDate === todayStr) ? (
+                      /* ── Worn today: Logged + Unwear ── */
+                      <motion.div
+                        key="logged"
+                        initial={{ opacity: 0, scale: 0.85 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.85 }}
+                        className="flex items-center gap-2"
+                      >
+                        <span className="text-[10px] font-medium text-black/35 whitespace-nowrap">
+                          Last worn: {formatShortDate(todayStr)}
+                        </span>
+                        <span className="flex items-center gap-1 text-xs font-bold text-yellow-500">
+                          <Check className="w-3.5 h-3.5" /> Logged!
+                        </span>
+                        <button
+                          onClick={() => handleUnwearToday(outfit.id, outfit.items ?? [])}
+                          className="text-[10px] font-bold uppercase tracking-wide text-black/40
+                                     underline underline-offset-2 hover:text-black/70 transition-colors"
+                        >
+                          Undo
+                        </button>
+                      </motion.div>
+                    ) : (
+                      /* ── Not worn today: optional last-worn label + button ── */
+                      <motion.div
+                        key="wear-btn"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="flex items-center gap-2"
+                      >
+                        {outfit.lastWornDate && (
+                          <span className="text-[10px] font-medium text-black/35 whitespace-nowrap">
+                            Last worn: {formatShortDate(outfit.lastWornDate)}
+                          </span>
+                        )}
+                        <button
+                          onClick={() => handleWearToday(outfit.id, outfit.items ?? [], outfit.lastWornDate)}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border-2 border-black
+                                     bg-primary text-xs font-bold uppercase tracking-wide
+                                     shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                                     active:translate-x-0.5 active:translate-y-0.5 active:shadow-none transition-all
+                                     whitespace-nowrap"
+                        >
+                          <Shirt className="w-3.5 h-3.5" />
+                          Wearing Today
+                        </button>
+                      </motion.div>
                     )}
-                  </div>
-                  {loggedToday ? (
-                    <button
-                      onClick={() => handleUndoUsage(outfit)}
-                      disabled={undoOutfitUsage.isPending}
-                      className="w-full py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px]
-                                  font-bold uppercase border-2 border-black bg-[#E8B0B8] text-black
-                                 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                                 active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
-                                 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      Logged · Undo
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleLogUsage(outfit)}
-                      disabled={logOutfitUsage.isPending}
-                      className="w-full py-2 rounded-lg flex items-center justify-center gap-1.5 text-[11px]
-                                 font-bold uppercase border-2 border-black bg-white text-black
-                                 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                                 active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
-                                 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      <Calendar className="w-3.5 h-3.5" />
-                      Used Today
-                    </button>
-                  )}
+                  </AnimatePresence>
                 </div>
               </motion.div>
             );
@@ -596,7 +718,7 @@ export default function SavedPage() {
             Head to your Vanity, spin the slots, and save looks you love.
           </p>
         </div>
-      ) : null}
+      ))}
 
       {/* Upgrade sheet */}
       <AnimatePresence>

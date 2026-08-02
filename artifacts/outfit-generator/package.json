@@ -1,6 +1,6 @@
 {
   "name": "@workspace/outfit-generator",
-  "version": "1.0.5",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -87,7 +87,7 @@
     "zod": "catalog:"
   },
   "dependencies": {
-    "@capacitor/app": "^8.1.0",
+    "@capacitor/app": "^8.1.1",
     "@capacitor/camera": "^8.2.1",
     "@capacitor/cli": "^8.4.1",
     "@capacitor/core": "^8.4.1",
@@ -101,6 +101,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@imgly/background-removal": "^1.7.0",
     "@revenuecat/purchases-capacitor": "^13.2.2",
+    "capacitor-native-biometric": "^4.2.2",
     "idb": "^8.0.3",
     "jszip": "^3.10.1",
     "onnxruntime-web": "1.21.0"

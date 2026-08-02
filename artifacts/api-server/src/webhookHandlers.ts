@@ -1,18 +1,9 @@
-import { getStripeSync } from './stripeClient';
-
+/**
+ * Stripe webhook handlers removed.
+ * Payments are handled exclusively via RevenueCat / Apple In-App Purchases.
+ */
 export class WebhookHandlers {
-  static async processWebhook(payload: Buffer, signature: string): Promise<void> {
-    // Validate payload is a Buffer
-    if (!Buffer.isBuffer(payload)) {
-      throw new Error(
-        'STRIPE WEBHOOK ERROR: Payload must be a Buffer. ' +
-        'Received type: ' + typeof payload + '. ' +
-        'This usually means express.json() parsed the body before reaching this handler. ' +
-        'FIX: Ensure webhook route is registered BEFORE app.use(express.json()).'
-      );
-    }
-
-    const sync = await getStripeSync();
-    await sync.processWebhook(payload, signature);
+  static async processWebhook(_payload: Buffer, _signature: string): Promise<void> {
+    throw new Error("Stripe webhooks have been removed.");
   }
 }

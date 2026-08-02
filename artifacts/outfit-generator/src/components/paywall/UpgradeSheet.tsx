@@ -1,147 +1,108 @@
 /**
- * UpgradeSheet — full-screen paywall.
+ * UpgradeSheet — full-screen paywall, no scrolling.
  *
- * Loads packages from RevenueCat on mount BEFORE showing the CTA so the
- * purchase button is always backed by a real StoreKit package. Live prices
- * come from the store (not hardcoded) per App Store Review guidelines.
- *
- * States:
- *   loading  — fetching packages from RevenueCat/StoreKit
- *   error    — fetch failed; show message + retry button
- *   ready    — packages loaded; normal paywall UI
+ * Loads real prices from RevenueCat on mount. Shows a loading spinner
+ * and a retry button if offerings cannot be fetched, so App Review
+ * reviewers never see a dead "Purchases unavailable" dead-end.
  */
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback } from "react";
 import { motion } from "framer-motion";
-import { X, Check, RefreshCw } from "lucide-react";
-import { useEntitlements, type PurchaseResult } from "@/hooks/useEntitlements";
-import { fetchPackages, type RCPackage } from "@/lib/revenuecat";
-import type { PurchaseProduct } from "@/types/local";
+import { X, Loader2, RefreshCw } from "lucide-react";
+import { useRCOfferings } from "@/hooks/useRCOfferings";
+import { restorePurchases } from "@/lib/revenuecat";
+import type { PurchaseProduct } from "@/lib/entitlements";
+import type { PurchaseResult } from "@/hooks/useEntitlements";
 
-const PRIVACY_POLICY_URL = "https://app.notion.com/p/My-Digital-Collection-Privacy-Policy-39682db6065380b19dedcb108d4a0ef4?source=copy_link";
-const TERMS_URL          = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const TERMS_URL   = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const PRIVACY_URL = "https://app.notion.com/p/My-Digital-Collection-Privacy-Policy-39682db6065380b19dedcb108d4a0ef4?source=copy_link";
 
-export type UpgradeReason = "items" | "outfits" | "mannequin";
-
-interface Props {
-  reason:  UpgradeReason;
-  onClose: () => void;
+function openUrl(url: string) {
+  window.open(url, "_system");
 }
 
-// ── Brand colours ─────────────────────────────────────────────────────────────
-const ROSE       = "#E8B0B8";
-const ROSE_DARK  = "#D0909A";
-const ROSE_LIGHT = "#FDF0F3";
-const ROSE_MID   = "#D0909A";
+export type UpgradeReason = "items" | "outfits" | "mannequin";
+interface Props { reason: UpgradeReason; onClose: () => void; }
 
-// ── Fallback prices shown in web preview (StoreKit prices used on native) ────
-const FALLBACK_PRICES: Record<PurchaseProduct, string> = {
-  monthly:  "$1.99",
-  yearly:   "$19.99",
-  lifetime: "$9.99",
-  premium:  "$9.99",
-};
-
-// ── Static plan metadata (prices come from StoreKit at runtime) ───────────────
 const FEATURES = [
-  "Unlimited beauty products",
-  "Unlimited saved looks",
-  "Save your entire vanity",
+  "Unlimited clothing items",
+  "Unlimited outfits",
+  "Save your entire wardrobe",
   "One-time payment options",
+  "Choose monthly, yearly or lifetime!",
 ] as const;
 
-type PlanMeta = {
-  id:      PurchaseProduct;
-  label:   string;
-  per:     string;
-  badge?:  string;
-  perks:   string[];
-};
+function GoldCheck() {
+  return (
+    <span className="flex-shrink-0 flex items-center justify-center rounded-full"
+          style={{ width: 20, height: 20, background: "#F0C030" }}>
+      <svg width="10" height="8" viewBox="0 0 11 9" fill="none">
+        <path d="M1 4.5L4 7.5L10 1" stroke="#0a0a0a" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
+type Plan = PurchaseProduct;
+interface PlanMeta {
+  id: Plan; label: string; period: string;
+  bullets: { text: string; accent?: boolean }[];
+  bestValue?: boolean;
+}
 
 const PLAN_META: PlanMeta[] = [
   {
-    id:    "monthly",
-    label: "MONTHLY",
-    per:   "/month",
-    perks: ["Cancel anytime", "Billed monthly"],
+    id: "monthly", label: "MONTHLY", period: "/month",
+    bullets: [{ text: "Cancel anytime" }, { text: "Billed monthly" }],
   },
   {
-    id:    "yearly",
-    label: "YEARLY",
-    per:   "/year",
-    perks: ["Save 17%", "Billed yearly"],
+    id: "annual", label: "YEARLY", period: "/year",
+    bullets: [{ text: "Save 17%", accent: true }, { text: "Billed yearly" }],
   },
   {
-    id:    "lifetime",
-    label: "LIFETIME",
-    per:   "one-time",
-    badge: "BEST VALUE",
-    perks: ["Pay once", "Yours forever"],
+    id: "lifetime", label: "LIFETIME", period: "one-time",
+    bullets: [{ text: "Pay once" }, { text: "Yours forever" }],
+    bestValue: true,
   },
 ];
 
-// ── Component ─────────────────────────────────────────────────────────────────
 export function UpgradeSheet({ onClose }: Props) {
-  const { purchase, restore } = useEntitlements();
-  const [selected,  setSelected]  = useState<PurchaseProduct>("lifetime");
-  const [status,    setStatus]    = useState<"idle" | "pending" | "restoring" | "error">("idle");
-  const [errorMsg,  setErrorMsg]  = useState<string | null>(null);
+  const { loading, error, priceFor, retry, purchase } = useRCOfferings();
+  const [status,  setStatus]  = useState<"idle" | "pending">("idle");
+  const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  const [plan, setPlan] = useState<Plan>("lifetime");
+  const [restoreStatus, setRestoreStatus] = useState<"idle" | "pending" | "done" | "none">("idle");
 
-  // Package loading state
-  const [packages,      setPackages]      = useState<RCPackage[]>([]);
-  const [loadingPkgs,   setLoadingPkgs]   = useState(true);
-  const [pkgError,      setPkgError]      = useState<string | null>(null);
+  const activeMeta = PLAN_META.find((p) => p.id === plan)!;
+  const activePrice = priceFor(plan);
+  const activeCta =
+    plan === "monthly"  ? `START MONTHLY – ${activePrice}` :
+    plan === "annual"   ? `START YEARLY – ${activePrice}`  :
+                          `UNLOCK FOREVER – ${activePrice}`;
 
-  // ── Load packages on mount ─────────────────────────────────────────────────
-  const loadPackages = useCallback(async () => {
-    setLoadingPkgs(true);
-    setPkgError(null);
-    console.log("[UpgradeSheet] Loading packages from RevenueCat...");
-    try {
-      const pkgs = await fetchPackages();
-      console.log(`[UpgradeSheet] ${pkgs.length} package(s) loaded:`, pkgs.map(p => `${p.product}=${p.priceString}`).join(", "));
-      setPackages(pkgs);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[UpgradeSheet] Failed to load packages:", msg);
-      setPkgError(msg);
-    } finally {
-      setLoadingPkgs(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadPackages();
-  }, [loadPackages]);
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  /** Get live StoreKit price, or fallback for web preview */
-  function priceFor(product: PurchaseProduct): string {
-    const pkg = packages.find(p => p.product === product);
-    return pkg?.priceString ?? FALLBACK_PRICES[product];
-  }
+  const handleRestore = useCallback(async () => {
+    if (restoreStatus === "pending") return;
+    setRestoreStatus("pending");
+    const tier = await restorePurchases();
+    setRestoreStatus(tier ? "done" : "none");
+    if (tier) setTimeout(onClose, 800);
+  }, [restoreStatus, onClose]);
 
   const handlePurchase = useCallback(async () => {
-    if (status === "pending" || status === "restoring") return;
-    if (loadingPkgs) {
-      console.warn("[UpgradeSheet] Tapped purchase while packages still loading");
-      return;
-    }
-    setErrorMsg(null);
+    if (status === "pending" || loading || !!error) return;
     setStatus("pending");
-    console.log(`[UpgradeSheet] Starting purchase for '${selected}'...`);
-    const result: PurchaseResult = await purchase(selected);
-    console.log(`[UpgradeSheet] Purchase result: ${result}`);
+    setPurchaseError(null);
+    const result: PurchaseResult = await purchase(plan);
     if (result === "success") {
       onClose();
     } else if (result === "unavailable") {
-      setErrorMsg("Purchase unavailable right now. Please try again.");
-      setStatus("error");
+      setStatus("idle");
+      setPurchaseError("Could not complete purchase. Please check your internet connection and try again.");
     } else {
-      // cancelled — user dismissed the native sheet
+      // cancelled — silent
       setStatus("idle");
     }
-  }, [status, loadingPkgs, purchase, selected, onClose]);
+  }, [status, loading, error, purchase, plan, onClose]);
 
   const handleRestore = useCallback(async () => {
     if (status !== "idle") return;
@@ -170,253 +131,214 @@ export function UpgradeSheet({ onClose }: Props) {
   // ── Main paywall UI ────────────────────────────────────────────────────────
   return (
     <motion.div
-      initial={{ opacity: 0, y: "100%" }}
-      animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, y: "100%" }} animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: "100%" }}
       transition={{ type: "spring", damping: 28, stiffness: 240 }}
       className="fixed inset-0 z-[80] flex flex-col max-w-md mx-auto overflow-hidden"
-      style={{ background: "#FDF5F9" }}
+      style={{ background: "#F8F4ED" }}
     >
-
-      {/* ── Hero strip ─────────────────────────────────────────────────── */}
+      {/* ── Yellow plaid header strip ── */}
       <div
-        className="relative flex items-center justify-center flex-shrink-0"
+        className="flex-shrink-0 w-full"
         style={{
           paddingTop: "env(safe-area-inset-top)",
-          minHeight: 64,
-          backgroundColor: "#E8B0B8",
+          height: "calc(env(safe-area-inset-top) + 48px)",
+          background: "#F0C030",
           backgroundImage: [
-            "repeating-linear-gradient(0deg, transparent 0px, transparent 20px, rgba(60,30,40,0.38) 20px, rgba(60,30,40,0.38) 30px, rgba(255,255,255,0.55) 30px, rgba(255,255,255,0.55) 32px, rgba(60,30,40,0.38) 32px, rgba(60,30,40,0.38) 42px, transparent 42px, transparent 62px)",
-            "repeating-linear-gradient(90deg, transparent 0px, transparent 20px, rgba(60,30,40,0.38) 20px, rgba(60,30,40,0.38) 30px, rgba(255,255,255,0.55) 30px, rgba(255,255,255,0.55) 32px, rgba(60,30,40,0.38) 32px, rgba(60,30,40,0.38) 42px, transparent 42px, transparent 62px)",
+            "repeating-linear-gradient(0deg,  transparent, transparent 13px, rgba(0,0,0,0.10) 13px, rgba(0,0,0,0.10) 15px)",
+            "repeating-linear-gradient(90deg, transparent, transparent 13px, rgba(0,0,0,0.10) 13px, rgba(0,0,0,0.10) 15px)",
+            "repeating-linear-gradient(0deg,  transparent, transparent  5px, rgba(255,255,255,0.22)  5px, rgba(255,255,255,0.22)  7px)",
+            "repeating-linear-gradient(90deg, transparent, transparent  5px, rgba(255,255,255,0.22)  5px, rgba(255,255,255,0.22)  7px)",
           ].join(", "),
         }}
-      >
-        <span
-          className="text-4xl leading-none"
-          style={{ filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.35))" }}
-        >
-          💄
-        </span>
-        <button
-          onClick={onClose}
-          style={{ top: "calc(env(safe-area-inset-top) + 10px)" }}
-          className="absolute right-3 w-8 h-8 rounded-full bg-white/90
-                     flex items-center justify-center border border-black/10
-                     active:scale-95 transition-transform"
-        >
-          <X className="w-4 h-4 text-black/60" />
-        </button>
-      </div>
+      />
 
-      {/* ── Title ──────────────────────────────────────────────────────── */}
-      <div className="px-5 pt-4 pb-3 flex-shrink-0">
-        <h1
-          className="font-black uppercase leading-none tracking-tight"
-          style={{ fontSize: 34, letterSpacing: "-0.02em" }}
-        >
-          UNLOCK YOUR<br />
-          <span style={{ color: ROSE }}>DIGITAL VANITY</span>
-        </h1>
-        <p className="text-xs font-semibold text-black/45 mt-1.5 tracking-wide">
-          A premium feature — unlock it once.
-        </p>
-      </div>
+      {/* ── Floating close button ── */}
+      <button onClick={onClose}
+              className="absolute z-10 top-0 right-4 w-8 h-8 rounded-full bg-white/90
+                         flex items-center justify-center shadow active:opacity-70 transition-opacity"
+              style={{ marginTop: "max(10px, env(safe-area-inset-top))" }}>
+        <X className="w-3.5 h-3.5 text-black" />
+      </button>
 
-      {/* ── Degraded-mode retry banner (shown when package load fails) ──── */}
-      {pkgError && (
-        <div
-          className="mx-5 mb-2 px-3 py-2 rounded-xl flex items-center gap-2 flex-shrink-0"
-          style={{ background: "#FFF0F0", border: "1.5px solid #FFAAAA" }}
-        >
-          <span className="text-xs font-semibold text-red-500 flex-1 leading-tight">
-            Couldn't reach the store. Prices shown are estimates.
-          </span>
-          <button
-            onClick={loadPackages}
-            className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wide text-white
-                       px-2.5 py-1.5 rounded-lg flex-shrink-0"
-            style={{ background: "#D0909A" }}
-          >
-            <RefreshCw className="w-3 h-3" />
-            Retry
-          </button>
-        </div>
-      )}
+      {/* ── Body ── */}
+      <div className="flex-1 min-h-0 flex flex-col px-4 pb-0 gap-1.5" style={{ paddingTop: "0.6rem" }}>
 
-      {/* ── Features card ──────────────────────────────────────────────── */}
-      <div
-        className="mx-5 mb-4 rounded-2xl flex-shrink-0"
-        style={{ background: "#111" }}
-      >
-        <p
-          className="px-4 pt-3 pb-1.5 font-bold text-[10px] uppercase tracking-widest"
-          style={{ color: ROSE_MID }}
-        >
-          Upgrade &amp; get:
-        </p>
-        <ul className="px-4 pb-3 grid grid-cols-2 gap-x-3 gap-y-2">
-          {FEATURES.map(f => (
-            <li key={f} className="flex items-center gap-2">
-              <span
-                className="w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0"
-                style={{ background: ROSE }}
-              >
-                <Check className="w-2.5 h-2.5 text-white" strokeWidth={3} />
-              </span>
-              <span className="text-white text-[11px] font-medium leading-tight">{f}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* ── Plan picker ────────────────────────────────────────────────── */}
-      <p className="text-center text-[10px] font-bold uppercase tracking-widest text-black/35 mb-2.5 flex-shrink-0">
-        Choose your plan
-      </p>
-
-      {/* Loading skeleton */}
-      {loadingPkgs ? (
-        <div className="px-5 flex gap-2 mb-4 flex-shrink-0">
-          {PLAN_META.map(plan => (
-            <div
-              key={plan.id}
-              className="flex-1 h-28 rounded-xl animate-pulse"
-              style={{ background: "#F0E4E8" }}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="px-5 flex gap-2 mb-4 flex-shrink-0">
-          {PLAN_META.map(plan => {
-            const active = selected === plan.id;
-            const livePrice = priceFor(plan.id);
-            return (
-              <button
-                key={plan.id}
-                onClick={() => setSelected(plan.id)}
-                className="flex-1 flex flex-col items-start p-3 rounded-xl text-left transition-all"
-                style={{
-                  position:   "relative",
-                  background:  active ? ROSE_LIGHT : "white",
-                  border:      active ? `2px solid ${ROSE}` : "2px solid #E8D5DF",
-                  boxShadow:   active ? `3px 3px 0 ${ROSE}` : "none",
-                }}
-              >
-                {plan.badge && (
-                  <span
-                    className="absolute -top-2.5 left-1/2 -translate-x-1/2 whitespace-nowrap
-                               text-[8px] font-black uppercase tracking-wide px-2 py-0.5 rounded-full"
-                    style={{ background: ROSE, color: "#fff" }}
-                  >
-                    {plan.badge}
-                  </span>
-                )}
-
-                <span className="text-[9px] font-black uppercase tracking-widest text-black/45 mb-0.5">
-                  {plan.label}
-                </span>
-                {/* Live price from StoreKit — required by App Store guidelines */}
-                <span className="font-black text-xl leading-none">
-                  {livePrice}
-                </span>
-                <span className="text-[10px] text-black/35 font-medium mb-2">
-                  {plan.per}
-                </span>
-
-                {plan.perks.map(perk => (
-                  <span key={perk} className="flex items-center gap-1 text-[9px] font-semibold text-black/55">
-                    <Check
-                      className="w-2.5 h-2.5 flex-shrink-0"
-                      strokeWidth={3}
-                      style={{ color: active ? ROSE : "#aaa" }}
-                    />
-                    {perk}
-                  </span>
-                ))}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── CTA ────────────────────────────────────────────────────────── */}
-      <div
-        className="px-5 flex flex-col gap-2.5 flex-shrink-0 mt-auto"
-        style={{ paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}
-      >
-        {errorMsg && (
-          <p className="text-center text-xs font-semibold text-red-500 -mb-1">
-            {errorMsg}
+        {/* Headline */}
+        <div className="flex-shrink-0">
+          <h1 className="font-display font-black uppercase leading-none tracking-tight"
+              style={{ fontSize: "clamp(1.25rem, 6vw, 1.65rem)", color: "#0a0a0a" }}>
+            Unlock Your Unlimited<br />Digital Closet
+          </h1>
+          <p className="text-[11px] text-black/45 font-semibold mt-0.5">
+            A premium feature — unlock it once.
           </p>
+        </div>
+
+        {/* Dark features card */}
+        <div className="flex-shrink-0 rounded-2xl overflow-hidden flex flex-col"
+             style={{ background: "#0a0a0a" }}>
+          <div className="px-3 pt-2 pb-1 flex-shrink-0">
+            <p className="font-bold text-[10px] tracking-widest uppercase"
+               style={{ color: "#F0C030" }}>
+              Upgrade to Premium &amp; Get:
+            </p>
+          </div>
+          <div className="flex-shrink-0" style={{ height: 1, background: "rgba(255,255,255,0.1)" }} />
+          <ul className="flex flex-col gap-0.5 px-3 py-1.5">
+            {FEATURES.map((text, i) => (
+              <React.Fragment key={text}>
+                <li className="flex items-center gap-2.5 py-0.5">
+                  <GoldCheck />
+                  <span className="text-white font-semibold text-[12px] leading-snug">{text}</span>
+                </li>
+                {i < FEATURES.length - 1 && (
+                  <div style={{ height: 1, background: "rgba(255,255,255,0.07)", marginLeft: 32 }} />
+                )}
+              </React.Fragment>
+            ))}
+          </ul>
+        </div>
+
+        {/* Plan label */}
+        <p className="flex-shrink-0 text-center text-[10px] font-black tracking-widest uppercase text-black/45">
+          Choose Your Plan
+        </p>
+
+        {/* ── Plan cards — loading / error / ready ── */}
+        {loading ? (
+          <div className="flex-shrink-0 flex items-center justify-center py-6 gap-2 text-black/40">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs font-semibold">Loading plans…</span>
+          </div>
+        ) : error ? (
+          <div className="flex-shrink-0 flex flex-col items-center gap-2 py-4">
+            <p className="text-xs text-red-600 text-center font-medium px-4">
+              Could not load plans. Please check your connection.
+            </p>
+            <button onClick={retry}
+                    className="flex items-center gap-1.5 text-xs font-bold text-black/60
+                               border border-black/20 rounded-lg px-3 py-1.5 active:opacity-70">
+              <RefreshCw className="w-3 h-3" /> Retry
+            </button>
+          </div>
+        ) : (
+          <div className="flex-shrink-0 flex gap-1.5">
+            {PLAN_META.map((p) => {
+              const selected   = plan === p.id;
+              const isLifetime = p.id === "lifetime";
+              const price      = priceFor(p.id);
+              return (
+                <button key={p.id} onClick={() => setPlan(p.id)}
+                        className="flex-1 rounded-xl flex flex-col relative overflow-hidden text-left transition-all"
+                        style={{
+                          background:  isLifetime ? "#F0C030" : "#fff",
+                          border:      `2px solid ${selected ? "#0a0a0a" : "rgba(0,0,0,0.12)"}`,
+                          boxShadow:   selected ? "3px 3px 0 rgba(0,0,0,0.85)" : "none",
+                          padding:     "6px 6px 7px",
+                        }}>
+                  {p.bestValue && (
+                    <span className="absolute top-0 right-0 font-black text-white text-[7px]
+                                     uppercase tracking-tight leading-tight px-1.5 py-1
+                                     rounded-bl-xl rounded-tr-xl"
+                          style={{ background: "#E0345A" }}>
+                      BEST ★{"\n"}VALUE
+                    </span>
+                  )}
+                  <span className="font-black text-[8px] tracking-widest uppercase block mb-0.5"
+                        style={{ color: isLifetime ? "#0a0a0a" : "rgba(0,0,0,0.4)" }}>
+                    {p.label}
+                  </span>
+                  <span className="font-black leading-none block"
+                        style={{ fontSize: "clamp(1.15rem, 5.5vw, 1.4rem)", color: "#0a0a0a" }}>
+                    {price}
+                  </span>
+                  <span className="text-[9px] font-semibold block mb-1.5"
+                        style={{ color: isLifetime ? "#0a0a0a" : "rgba(0,0,0,0.4)" }}>
+                    {p.period}
+                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    {p.bullets.map((b) => (
+                      <div key={b.text} className="flex items-center gap-1">
+                        <span className="flex-shrink-0 rounded-full flex items-center justify-center"
+                              style={{ width: 12, height: 12,
+                                       background: isLifetime ? "rgba(0,0,0,0.18)" : "#F0C030" }}>
+                          <svg width="6" height="5" viewBox="0 0 7 6" fill="none">
+                            <path d="M1 3L2.8 5L6 1"
+                                  stroke={isLifetime ? "#fff" : "#0a0a0a"}
+                                  strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                        <span className="text-[8px] font-bold leading-tight"
+                              style={{ color: b.accent ? "#D07010" : (isLifetime ? "#0a0a0a" : "rgba(0,0,0,0.5)") }}>
+                          {b.text}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
         )}
 
-        <button
-          onClick={handlePurchase}
-          disabled={ctaBusy || loadingPkgs}
-          className="w-full py-4 rounded-xl font-black text-base uppercase tracking-wide
-                     text-black transition-all active:translate-y-0.5 active:shadow-none
-                     disabled:opacity-60 disabled:cursor-not-allowed"
-          style={{
-            background:  ctaBusy ? ROSE_DARK : `linear-gradient(to bottom, ${ROSE}, ${ROSE_DARK})`,
-            border:      `2.5px solid ${ROSE_DARK}`,
-            boxShadow:   ctaBusy ? "none" : "3px 3px 0 rgba(0,0,0,0.85)",
-            letterSpacing: "0.04em",
-          }}
-        >
-          {loadingPkgs
-            ? "Loading plans…"
-            : status === "pending"
-              ? "Opening checkout…"
-              : status === "restoring"
-                ? "Restoring…"
-                : selected === "monthly"
-                  ? `UNLOCK MONTHLY – ${selectedPrice} ›`
-                  : selected === "yearly"
-                    ? `UNLOCK YEARLY – ${selectedPrice} ›`
-                    : `UNLOCK FOREVER – ${selectedPrice} ›`}
+      </div>
+
+      {/* ── CTA footer ── */}
+      <div className="flex-shrink-0 px-4 pt-1 flex flex-col gap-1"
+           style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+        <button onClick={handlePurchase}
+                disabled={status === "pending" || loading || !!error}
+                className="w-full py-3 rounded-2xl font-black text-sm uppercase tracking-tight
+                           border-4 border-black text-black flex items-center justify-center gap-2
+                           active:translate-x-0.5 active:translate-y-0.5 transition-all
+                           disabled:opacity-60 disabled:cursor-not-allowed"
+                style={{
+                  background:    "#F0C030",
+                  boxShadow:     (status === "pending" || loading || !!error) ? "none" : "4px 4px 0px rgba(0,0,0,1)",
+                  letterSpacing: "0.03em",
+                }}>
+          {status === "pending" ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> Opening checkout…</>
+          ) : loading ? (
+            "Loading plans…"
+          ) : error ? (
+            "Plans unavailable"
+          ) : (
+            <>{activeCta} <span className="text-lg leading-none">›</span></>
+          )}
+        </button>
+        {purchaseError && (
+          <p className="text-xs text-red-600 text-center font-medium px-2">{purchaseError}</p>
+        )}
+        <button onClick={onClose}
+                className="text-xs font-bold text-black/35 text-center underline underline-offset-2
+                           hover:text-black/55 transition-colors py-0.5">
+          Maybe Later
         </button>
 
-        {/* Restore + Maybe Later */}
-        <div className="flex items-center justify-center gap-4">
-          <button
-            onClick={handleRestore}
-            disabled={ctaBusy || loadingPkgs}
-            className="text-xs font-bold text-black/40 underline underline-offset-2
-                       hover:text-black/60 transition-colors disabled:opacity-40"
-          >
-            Restore Purchases
-          </button>
-          <span className="text-black/20 text-xs">·</span>
-          <button
-            onClick={onClose}
-            className="text-xs font-bold text-black/40 hover:text-black/60 transition-colors"
-          >
-            Maybe Later
-          </button>
-        </div>
+        {/* Restore Purchases */}
+        <button onClick={handleRestore} disabled={restoreStatus === "pending"}
+                className="text-xs font-bold text-black/35 text-center underline underline-offset-2
+                           hover:text-black/55 transition-colors py-0.5 disabled:opacity-50">
+          {restoreStatus === "pending" ? "Restoring…" :
+           restoreStatus === "done"    ? "✓ Purchases Restored" :
+           restoreStatus === "none"    ? "No purchases found" :
+           "Restore Purchases"}
+        </button>
 
         {/* Legal links — required by Apple */}
-        <div className="flex items-center justify-center gap-3 pb-1">
-          <a
-            href={PRIVACY_POLICY_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-medium text-black/35 underline underline-offset-2
-                       hover:text-black/55 transition-colors"
-          >
-            Privacy Policy
-          </a>
-          <span className="text-black/20 text-[10px]">·</span>
-          <a
-            href={TERMS_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[10px] font-medium text-black/35 underline underline-offset-2
-                       hover:text-black/55 transition-colors"
-          >
+        <p className="text-center leading-relaxed" style={{ fontSize: 9, color: "rgba(0,0,0,0.28)" }}>
+          <button onClick={() => openUrl(TERMS_URL)}
+                  className="underline underline-offset-1 active:opacity-60">
             Terms of Use
-          </a>
-        </div>
+          </button>
+          {" · "}
+          <button onClick={() => openUrl(PRIVACY_URL)}
+                  className="underline underline-offset-1 active:opacity-60">
+            Privacy Policy
+          </button>
+        </p>
       </div>
     </motion.div>
   );

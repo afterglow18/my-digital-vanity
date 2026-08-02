@@ -1,5 +1,5 @@
 import React from "react";
-import type { ClothingItem } from "@/types/local";
+import { ClothingItem } from "@/lib/local-api";
 import { getImageUrl } from "@/lib/utils";
 
 interface ClothingCardProps {

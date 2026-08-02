@@ -1,33 +1,57 @@
 /**
  * useEntitlements — entitlement hook backed by RevenueCat.
  *
- * localStorage is a fast-read CACHE for instant UI. RevenueCat is always the
- * authority. syncTierFromRevenueCat() is called on launch, foreground return,
- * after purchase, and after restore — so refunds / expiry auto-downgrade.
+ * RevenueCat is the single source of truth for premium access.
+ * localStorage is used only as the initial render value while the first
+ * RC network call is in-flight — it is never trusted on its own.
+ *
+ * Entitlement state is re-verified:
+ *   • On app launch (mount)
+ *   • Every time the app returns to the foreground (appStateChange)
+ *   • After a purchase completes
+ *   • After Restore Purchases completes
+ *
+ * If RevenueCat reports no active entitlement (expired, refunded, or never
+ * purchased) the tier is set to "free" regardless of what is cached locally.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TIER MAP
+ *
+ *   monthly / annual  →  "unlock"  (unlimited items + outfits)
+ *   lifetime          →  "premium" (unlock + mannequin view)
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-
-import { useCallback, useSyncExternalStore } from 'react';
-import type { Tier, TierCapabilities, PurchaseProduct } from '@/types/local';
-import { TIER_CAPS, PRODUCT_TIER } from '@/types/local';
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { Capacitor } from "@capacitor/core";
 import {
-  PRODUCT_TIER_MAP,
-  getPackageForProduct,
-  getActiveEntitlement,
-  purchaseRCPackage,
-  restoreAndCheck,
-} from '@/lib/revenuecat';
+  Tier,
+  TIER_CAPS,
+  TierCapabilities,
+  PurchaseProduct,
+} from "@/lib/entitlements";
+import { checkSubscription, purchaseProduct, restorePurchases } from "@/lib/revenuecat";
+
+const PRODUCT_KEY = "mdc_last_product";
+
+/** Store the purchased product name so account pages can show it without an async call. */
+export function writeStoredProduct(product: string): void {
+  try { localStorage.setItem(PRODUCT_KEY, product); } catch {}
+}
+
+/** Read back the last purchased product (e.g. "monthly"), or null if unknown. */
+export function readStoredProduct(): string | null {
+  try { return localStorage.getItem(PRODUCT_KEY); } catch { return null; }
+}
 
 // ── Shared external store ─────────────────────────────────────────────────────
-
-const STORAGE_KEY         = 'mdc_tier';
-const STORAGE_PRODUCT_KEY = 'mdc_active_product';
+const STORAGE_KEY = "mdc_tier";
 
 function readStoredTier(): Tier {
   try {
     const v = localStorage.getItem(STORAGE_KEY);
     if (v === 'unlock' || v === 'premium') return v;
   } catch {
-    // private browsing
+    // localStorage unavailable (rare private-browsing scenario)
   }
   return 'free';
 }
@@ -57,59 +81,38 @@ function getTierSnapshot(): Tier {
   return _currentTier;
 }
 
-/** Promote (or demote) the tier globally and persist. */
-export function setGlobalTier(t: Tier, product?: PurchaseProduct): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, t);
-    if (product) localStorage.setItem(STORAGE_PRODUCT_KEY, product);
-    else if (t === 'free') localStorage.removeItem(STORAGE_PRODUCT_KEY);
-  } catch {}
+/** Read the current tier without subscribing to updates. */
+export function getCurrentTier(): Tier {
+  return _currentTier;
+}
+
+/** Update the shared tier store and persist to localStorage. */
+export function setGlobalTier(t: Tier): void {
+  try { localStorage.setItem(STORAGE_KEY, t); } catch {}
   _currentTier = t;
   _subscribers.forEach((fn) => fn());
 }
 
 /**
- * Ask RevenueCat for the current CustomerInfo and sync the in-app tier.
- * Uses getActiveEntitlement() which calls ensureInitialized() internally —
- * so this is safe to call at any point after initRevenueCat() is invoked.
- *
- * On network/SDK error the cached value is kept — never punish users for
- * a bad connection.  On confirmed no-entitlement, downgrades to free so
- * refunds and expiries take effect automatically.
+ * Fetch the current entitlement state from RevenueCat and update the global
+ * tier to match. This is authoritative — if RC reports no active entitlement
+ * (expired, refunded, or never purchased) the tier is downgraded to "free".
+ * No-op on web (dev always runs in free mode).
  */
-export async function syncTierFromRevenueCat(): Promise<void> {
-  try {
-    const active = await getActiveEntitlement();
-    console.log(`[Entitlements] syncTierFromRevenueCat — active: ${active}, current tier: ${_currentTier}`);
-    if (active) {
-      // Only upgrade, never silently downgrade premium → unlock from sync
-      if (_currentTier === 'free') {
-        console.log('[Entitlements] Upgrading tier to unlock (entitlement active)');
-        setGlobalTier('unlock');
-      }
-    } else {
-      // Confirmed no active entitlement — downgrade (handles refunds & expiry).
-      // BUT: skip the downgrade during the grace window after a purchase so
-      // RevenueCat propagation delay doesn't immediately wipe a real purchase.
-      const withinGrace = Date.now() - _lastPurchaseAt < PURCHASE_GRACE_MS;
-      if (!withinGrace) {
-        if (_currentTier !== 'free') {
-          console.log('[Entitlements] Downgrading tier to free (no active entitlement, grace window passed)');
-        }
-        setGlobalTier('free');
-      } else {
-        console.log(`[Entitlements] Within grace window (${Math.round((PURCHASE_GRACE_MS - (Date.now() - _lastPurchaseAt)) / 1000)}s remaining) — keeping tier: ${_currentTier}`);
-      }
-    }
-  } catch (e) {
-    // SDK not configured on web, or network failure — keep cached value
-    console.warn('[Entitlements] syncTierFromRevenueCat error (keeping cached tier):', e);
+export async function syncTierFromRC(): Promise<void> {
+  const active = await checkSubscription();
+  if (active === "premium") {
+    setGlobalTier("premium");
+  } else if (active === "unlock") {
+    setGlobalTier("unlock");
+  } else {
+    // No active entitlement → ensure access is revoked
+    setGlobalTier("free");
   }
 }
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-export type PurchaseResult = 'success' | 'cancelled' | 'unavailable';
+// ── Purchase result ───────────────────────────────────────────────────────────
+export type PurchaseResult = "success" | "cancelled" | "unavailable";
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
@@ -117,6 +120,30 @@ export function useEntitlements() {
   const tier = useSyncExternalStore(subscribeTier, getTierSnapshot);
   const caps: TierCapabilities = TIER_CAPS[tier];
 
+  // ── Sync on launch + every foreground resume ────────────────────────────────
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+
+    // Check on app launch
+    syncTierFromRC();
+
+    // Re-check whenever the app returns to the foreground so refunds / expirations
+    // are detected without requiring a cold restart.
+    let removeListener: (() => void) | undefined;
+    import("@capacitor/app").then(({ App }) => {
+      App.addListener("appStateChange", ({ isActive }) => {
+        if (isActive) syncTierFromRC();
+      }).then((handle) => {
+        removeListener = () => handle.remove();
+      });
+    });
+
+    return () => {
+      removeListener?.();
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** True if the user can add another item given the current wardrobe size. */
   const canAddItem = useCallback(
     (currentCount: number) =>
       caps.maxItems === null || currentCount < caps.maxItems,
@@ -129,51 +156,27 @@ export function useEntitlements() {
     [caps.maxOutfits],
   );
 
+  /**
+   * Trigger the purchase flow via RevenueCat / Apple StoreKit.
+   * After a successful purchase, re-reads the entitlement from RevenueCat to
+   * set the tier authoritatively — never infers it from the product type alone.
+   */
   const purchase = useCallback(
     async (product: PurchaseProduct): Promise<PurchaseResult> => {
-      try {
-        const pkg = await getPackageForProduct(product);
-        if (!pkg) {
-          console.warn('[RevenueCat] Package not found for product:', product);
-          return 'unavailable';
-        }
-
-        // purchaseRCPackage calls ensureInitialized() internally, so there is
-        // no race with configure(). On success it returns customerInfo; on
-        // cancel/error it throws (caught below).
-        await purchaseRCPackage(pkg);
-
-        _lastPurchaseAt = Date.now();
-        const newTier: Tier = PRODUCT_TIER_MAP[product] ?? PRODUCT_TIER[product] ?? 'unlock';
-        setGlobalTier(newTier, product);
-        return 'success';
-      } catch (err: any) {
-        // userCancelled is thrown as an error by the SDK
-        if (err?.code === 'PURCHASE_CANCELLED' || err?.userCancelled === true) {
-          return 'cancelled';
-        }
-        console.error('[RevenueCat] Purchase error:', err);
-        return 'unavailable';
+      const result = await purchaseProduct(product);
+      if (result === "success") {
+        await syncTierFromRC();
       }
     },
     [],
   );
 
-  const restore = useCallback(async (): Promise<PurchaseResult> => {
-    try {
-      const active = await restoreAndCheck();
-      if (active) {
-        _lastPurchaseAt = Date.now();
-        setGlobalTier('unlock');
-        return 'success';
-      }
-      // Restore confirmed no entitlement — downgrade if currently elevated
-      setGlobalTier('free');
-      return 'cancelled';
-    } catch (err) {
-      console.error('[RevenueCat] Restore error:', err);
-      return 'unavailable';
-    }
+  /** Restore previous purchases via RevenueCat. Returns active tier or false. */
+  const restore = useCallback(async (): Promise<"unlock" | "premium" | false> => {
+    const result = await restorePurchases();
+    if (result === "premium") setGlobalTier("premium");
+    else if (result === "unlock") setGlobalTier("unlock");
+    return result;
   }, []);
 
   return { tier, caps, canAddItem, canSaveOutfit, purchase, restore };

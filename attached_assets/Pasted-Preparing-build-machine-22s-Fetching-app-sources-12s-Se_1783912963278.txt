@@ -1,0 +1,70 @@
+Preparing build machine
+22s
+Fetching app sources
+12s
+Set up code signing identities
+2s
+Install pnpm and dependencies
+13s
+Build web assets
+4s
+Capacitor add iOS and sync
+1s
+Inject app icon
+12s
+Share App scheme
+1m 10s
+
+
+
+Show command
+Showing the last 50 lines. Click this button to load the full log
+drwxr-xr-x  3 builder  staff  96 Jul 13 03:20 ..
+Available targets/schemes:
+Command line invocation:
+    /Applications/Xcode-26.4.app/Contents/Developer/usr/bin/xcodebuild -list -project artifacts/outfit-generator/ios/App/App.xcodeproj
+
+Resolve Package Graph
+
+Fetching from https://github.com/ionic-team/capacitor-swift-pm.git
+
+Creating working copy of package ‘capacitor-swift-pm’
+
+Checking out 8.4.1 of package ‘capacitor-swift-pm’
+
+Shared schemes:
+total 0
+drwxr-xr-x  2 builder  staff  64 Jul 13 03:20 .
+drwxr-xr-x  3 builder  staff  96 Jul 13 03:20 ..
+Available targets/schemes:
+Command line invocation:
+    /Applications/Xcode-26.4.app/Contents/Developer/usr/bin/xcodebuild -list -project artifacts/outfit-generator/ios/App/App.xcodeproj
+
+Resolve Package Graph
+
+Fetching from https://github.com/ionic-team/capacitor-swift-pm.git
+
+Creating working copy of package ‘capacitor-swift-pm’
+
+Checking out 8.4.1 of package ‘capacitor-swift-pm’
+
+failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Capacitor.xcframework.zip' which is required by binary target 'Capacitor': downloadError("The request timed out.")failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Cordova.xcframework.zip' which is required by binary target 'Cordova': downloadError("The request timed out.")fatalError2026-07-13 03:21:54.709 xcodebuild[1905:15579] Writing error result bundle to /var/folders/w2/rrf5p87d1bbfyphxc7jdnyvh0000gn/T/ResultBundle_2026-13-07_03-21-0054.xcresult
+xcodebuild: error: Could not resolve package dependencies:
+  failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Capacitor.xcframework.zip' which is required by binary target 'Capacitor': downloadError("The request timed out.")
+  failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Cordova.xcframework.zip' which is required by binary target 'Cordova': downloadError("The request timed out.")
+  fatalError
+
+
+
+Build failed :|
+Step 7 script `Share App scheme` exited with status code 74
+failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Capacitor.xcframework.zip' which is required by binary target 'Capacitor': downloadError("The request timed out.")failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Cordova.xcframework.zip' which is required by binary target 'Cordova': downloadError("The request timed out.")fatalError2026-07-13 03:21:54.709 xcodebuild[1905:15579] Writing error result bundle to /var/folders/w2/rrf5p87d1bbfyphxc7jdnyvh0000gn/T/ResultBundle_2026-13-07_03-21-0054.xcresult
+xcodebuild: error: Could not resolve package dependencies:
+  failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Capacitor.xcframework.zip' which is required by binary target 'Capacitor': downloadError("The request timed out.")
+  failed downloading 'https://github.com/ionic-team/capacitor-swift-pm/releases/download/8.4.1/Cordova.xcframework.zip' which is required by binary target 'Cordova': downloadError("The request timed out.")
+  fatalError
+
+
+
+Build failed :|
+Step 7 script `Share App scheme` exited with status code 74

@@ -1,410 +1,227 @@
 /**
- * Local IndexedDB database service — replaces the API server.
- * Works identically on iOS (via Capacitor's WKWebView) and web dev.
+ * Local database — clothing items, outfits, and settings stored in localStorage.
  *
- * Schema version 1: clothing_items, outfits, outfit_items.
+ * Why localStorage: Reliable on iOS WebKit, no setup complexity,
+ * survives app updates, included in iCloud backup automatically.
+ *
+ * Images are stored separately via imageStorage.ts (Capacitor Filesystem).
+ * imageObjectPath stores just the filename (e.g. "tops-1234567890.jpg").
  */
 
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
-import type {
-  ClothingItem,
-  SavedOutfit,
-  CreateClothingData,
-  UpdateClothingData,
-  WardrobeStats,
-} from '@/types/local';
-
-// ── Schema ────────────────────────────────────────────────────────────────────
-
-type OutfitRow = Omit<SavedOutfit, 'items'>;
-type OutfitItemRow = {
-  id: string;
-  outfitId: string;
-  clothingItemId: string;
-  position: number;
-};
-
-interface VanitySchema extends DBSchema {
-  clothing: {
-    key: string;
-    value: ClothingItem;
-    indexes: { 'by-category': string; 'by-created': string };
-  };
-  outfits: {
-    key: string;
-    value: OutfitRow;
-    indexes: { 'by-created': string };
-  };
-  outfit_items: {
-    key: string;
-    value: OutfitItemRow;
-    indexes: { 'by-outfit': string };
-  };
+export interface ClothingItem {
+  id: number;
+  name: string;
+  category: string;
+  imageObjectPath?: string | null;   // filename only
+  color?: string | null;
+  brand?: string | null;
+  size?: string | null;
+  season?: string | null;
+  occasion?: string | null;
+  purchasePrice?: string | null;
+  purchaseDate?: string | null;
+  notes?: string | null;
+  isFavorite?: boolean | null;
+  timesWorn?: number | null;
+  lastWornDate?: string | null;  // ISO date "YYYY-MM-DD", local timezone
+  // Vision indexer fields (safe default: undefined = unanalyzed)
+  visionLabels?:  string[];
+  visionText?:    string[];
+  visionVersion?: number;        // 0=unanalyzed, 1=iOS, 4=web, 5=web-empty
+  createdAt?: string | null;
 }
 
-// ── Singleton connection ───────────────────────────────────────────────────────
-
-let _dbPromise: Promise<IDBPDatabase<VanitySchema>> | null = null;
-
-function getDB(): Promise<IDBPDatabase<VanitySchema>> {
-  if (!_dbPromise) {
-    _dbPromise = openDB<VanitySchema>('vanity-db', 1, {
-      upgrade(db) {
-        if (!db.objectStoreNames.contains('clothing')) {
-          const s = db.createObjectStore('clothing', { keyPath: 'id' });
-          s.createIndex('by-category', 'category');
-          s.createIndex('by-created', 'createdAt');
-        }
-        if (!db.objectStoreNames.contains('outfits')) {
-          const s = db.createObjectStore('outfits', { keyPath: 'id' });
-          s.createIndex('by-created', 'createdAt');
-        }
-        if (!db.objectStoreNames.contains('outfit_items')) {
-          const s = db.createObjectStore('outfit_items', { keyPath: 'id' });
-          s.createIndex('by-outfit', 'outfitId');
-        }
-      },
-    });
-  }
-  return _dbPromise;
+export interface Outfit {
+  id: number;
+  name: string;
+  notes?: string | null;
+  items?: ClothingItem[];
+  createdAt?: string | null;
+  lastWornDate?: string | null;  // ISO date "YYYY-MM-DD", local timezone
 }
 
-// ── Clothing ──────────────────────────────────────────────────────────────────
-
-/** Fills in any fields added after the original schema so old rows are safe. */
-function backfillItem(item: ClothingItem): ClothingItem {
-  return {
-    ...item,
-    lastUsedDate:  item.lastUsedDate  ?? null,
-    visionLabels:  item.visionLabels  ?? [],
-    visionText:    item.visionText    ?? [],
-    visionVersion: item.visionVersion ?? 0,
-  };
+// Internal format for stored outfits (item IDs, not full objects)
+export interface StoredOutfit {
+  id: number;
+  name: string;
+  notes?: string | null;
+  itemIds: number[];
+  createdAt?: string | null;
+  lastWornDate?: string | null;  // ISO date "YYYY-MM-DD", local timezone
 }
 
-export async function dbListClothing(category?: string): Promise<ClothingItem[]> {
-  const db = await getDB();
-  if (category) {
-    const items = (await db.getAllFromIndex('clothing', 'by-category', category))
-      .map(backfillItem);
-    return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }
-  const items = (await db.getAll('clothing')).map(backfillItem);
-  return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+// ── Storage keys ──────────────────────────────────────────────────────────────
+const ITEMS_KEY   = "mdc_clothing_items";
+const OUTFITS_KEY = "mdc_outfits";
+const SEQ_KEY     = "mdc_seq";
+
+// ── ID counter ────────────────────────────────────────────────────────────────
+function nextId(): number {
+  const n = parseInt(localStorage.getItem(SEQ_KEY) ?? "0", 10) + 1;
+  localStorage.setItem(SEQ_KEY, String(n));
+  return n;
 }
 
-export async function dbCreateClothing(data: CreateClothingData): Promise<ClothingItem> {
-  const db = await getDB();
-  const now = new Date().toISOString();
+// ── Clothing Items ─────────────────────────────────────────────────────────────
+export function getAllClothingItems(): ClothingItem[] {
+  try {
+    return JSON.parse(localStorage.getItem(ITEMS_KEY) ?? "[]") as ClothingItem[];
+  } catch { return []; }
+}
+
+function saveAllClothingItems(items: ClothingItem[]): void {
+  localStorage.setItem(ITEMS_KEY, JSON.stringify(items));
+}
+
+export function getClothingItem(id: number): ClothingItem | null {
+  return getAllClothingItems().find((i) => i.id === id) ?? null;
+}
+
+export function listClothingItems(category?: string): ClothingItem[] {
+  const all = getAllClothingItems();
+  if (!category) return all;
+  return all.filter((i) => i.category === category);
+}
+
+export function createClothingItem(
+  data: Partial<ClothingItem> & { name: string; category: string },
+): ClothingItem {
+  const items = getAllClothingItems();
   const item: ClothingItem = {
-    id: crypto.randomUUID(),
-    name: data.name,
-    category: data.category,
-    imageObjectPath: data.imageObjectPath ?? null,
-    color: data.color ?? null,
-    brand: data.brand ?? null,
-    size: data.size ?? null,
-    season: data.season ?? null,
-    occasion: data.occasion ?? null,
-    purchasePrice: data.purchasePrice ?? null,
-    purchaseDate: data.purchaseDate ?? null,
-    notes: data.notes ?? null,
-    isFavorite: data.isFavorite ?? false,
-    timesWorn: 0,
-    lastUsedDate: null,
-    visionLabels: [],
-    visionText: [],
-    visionVersion: 0,
-    createdAt: now,
-    updatedAt: now,
+    ...data,
+    id: nextId(),
+    timesWorn: data.timesWorn ?? 0,
+    createdAt: new Date().toISOString(),
   };
-  await db.put('clothing', item);
+  items.unshift(item);
+  saveAllClothingItems(items);
   return item;
 }
 
-export async function dbUpdateClothing(id: string, data: UpdateClothingData): Promise<ClothingItem> {
-  const db = await getDB();
-  const existing = await db.get('clothing', id);
-  if (!existing) throw new Error(`Clothing item ${id} not found`);
-  const updated: ClothingItem = {
-    ...existing,
-    ...data,
-    id,
-    updatedAt: new Date().toISOString(),
-  };
-  await db.put('clothing', updated);
-  return updated;
+export function updateClothingItem(
+  id: number,
+  data: Partial<Omit<ClothingItem, "id" | "createdAt">>,
+): ClothingItem | null {
+  const items = getAllClothingItems();
+  const idx = items.findIndex((i) => i.id === id);
+  if (idx === -1) return null;
+  items[idx] = { ...items[idx], ...data };
+  saveAllClothingItems(items);
+  return items[idx];
 }
 
-export async function dbDeleteClothing(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('clothing', id);
-
-  // Remove from all outfits
-  const allOI = await db.getAll('outfit_items');
-  const tx = db.transaction('outfit_items', 'readwrite');
-  await Promise.all(
-    allOI
-      .filter((oi) => oi.clothingItemId === id)
-      .map((oi) => tx.store.delete(oi.id)),
-  );
-  await tx.done;
-
-  // Update itemIds arrays on affected outfit rows
-  const affectedOutfitIds = new Set(
-    allOI.filter((oi) => oi.clothingItemId === id).map((oi) => oi.outfitId),
-  );
-  for (const outfitId of affectedOutfitIds) {
-    const row = await db.get('outfits', outfitId);
-    if (row) {
-      await db.put('outfits', {
-        ...row,
-        itemIds: (row.itemIds ?? []).filter((i) => i !== id),
-      });
-    }
-  }
-}
-
-export async function dbGetWardrobeStats(): Promise<WardrobeStats> {
-  const db = await getDB();
-  const allItems = await db.getAll('clothing');
-  const allOutfits = await db.getAll('outfits');
-
-  const byCategory = (['makeup', 'skincare', 'hair', 'fragrances'] as const).map((cat) => ({
-    category: cat,
-    count: allItems.filter((i) => i.category === cat).length,
+export function deleteClothingItem(id: number): void {
+  saveAllClothingItems(getAllClothingItems().filter((i) => i.id !== id));
+  // Remove from all outfits too
+  const stored = getAllStoredOutfits().map((o) => ({
+    ...o,
+    itemIds: o.itemIds.filter((iid) => iid !== id),
   }));
+  saveAllStoredOutfits(stored);
+}
 
+export function getWardrobeStats(): { byCategory: { category: string; count: number }[] } {
+  const counts = new Map<string, number>();
+  for (const item of getAllClothingItems()) {
+    counts.set(item.category, (counts.get(item.category) ?? 0) + 1);
+  }
   return {
-    total: allItems.length,
-    byCategory,
-    favorites: allItems.filter((i) => i.isFavorite).length,
-    outfits: allOutfits.length,
+    byCategory: Array.from(counts.entries()).map(([category, count]) => ({ category, count })),
   };
 }
 
 // ── Outfits ───────────────────────────────────────────────────────────────────
-
-async function hydrateOutfit(
-  row: OutfitRow,
-  db: IDBPDatabase<VanitySchema>,
-): Promise<SavedOutfit> {
-  const ois = await db.getAllFromIndex('outfit_items', 'by-outfit', row.id);
-  ois.sort((a, b) => a.position - b.position);
-  const items = (
-    await Promise.all(ois.map((oi) => db.get('clothing', oi.clothingItemId)))
-  ).filter((i): i is ClothingItem => i != null)
-    .map(backfillItem);
-  return { ...row, items };
+export function getAllStoredOutfits(): StoredOutfit[] {
+  try {
+    return JSON.parse(localStorage.getItem(OUTFITS_KEY) ?? "[]") as StoredOutfit[];
+  } catch { return []; }
 }
 
-export async function dbListOutfits(): Promise<SavedOutfit[]> {
-  const db = await getDB();
-  const rows = await db.getAll('outfits');
-  rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt)); // newest first
-  return Promise.all(rows.map((row) => hydrateOutfit(row, db)));
+function saveAllStoredOutfits(outfits: StoredOutfit[]): void {
+  localStorage.setItem(OUTFITS_KEY, JSON.stringify(outfits));
 }
 
-export async function dbCreateOutfit(name: string, itemIds: string[]): Promise<SavedOutfit> {
-  const db = await getDB();
-  const now = new Date().toISOString();
-  const outfitId = crypto.randomUUID();
-
-  const row: OutfitRow = { id: outfitId, name, notes: null, lastUsedDate: null, itemIds, createdAt: now };
-  await db.put('outfits', row);
-
-  const tx = db.transaction('outfit_items', 'readwrite');
-  await Promise.all(
-    itemIds.map((itemId, idx) =>
-      tx.store.put({
-        id: crypto.randomUUID(),
-        outfitId,
-        clothingItemId: itemId,
-        position: idx,
-      }),
-    ),
-  );
-  await tx.done;
-
-  return hydrateOutfit(row, db);
-}
-
-export async function dbUpdateOutfit(
-  id: string,
-  data: { name?: string; notes?: string | null; lastUsedDate?: string | null },
-): Promise<void> {
-  const db = await getDB();
-  const existing = await db.get('outfits', id);
-  if (!existing) return;
-  await db.put('outfits', { ...existing, ...data });
-}
-
-/** Returns today's date as "YYYY-MM-DD" in local time. */
-function localToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-/**
- * Log an outfit as used today:
- * - Sets outfit.lastUsedDate to today's local date.
- * - Increments timesWorn and sets lastUsedDate on every item in the group.
- */
-export async function dbLogOutfitUsage(id: string, itemIds: string[]): Promise<void> {
-  const db = await getDB();
-  const row = await db.get('outfits', id);
-  if (row) await db.put('outfits', { ...row, lastUsedDate: localToday() });
-  const now = new Date().toISOString();
-  await Promise.all(
-    itemIds.map(async (itemId) => {
-      const item = await db.get('clothing', itemId);
-      if (item) {
-        await db.put('clothing', {
-          ...item,
-          timesWorn: (item.timesWorn ?? 0) + 1,
-          lastUsedDate: localToday(),
-          updatedAt: now,
-        });
-      }
-    }),
-  );
-}
-
-/**
- * Undo today's outfit log:
- * - Restores outfit.lastUsedDate to prevLastUsedDate.
- * - Decrements timesWorn by 1 (floor 0) on every item in the group.
- * - Restores each item's latest remaining usage date when other saved groups
- *   also contain that item.
- */
-export async function dbUndoOutfitUsage(
-  id: string,
-  prevLastUsedDate: string | null,
-  itemIds: string[],
-): Promise<void> {
-  const db = await getDB();
-  const row = await db.get('outfits', id);
-  if (row) await db.put('outfits', { ...row, lastUsedDate: prevLastUsedDate });
-  const allOutfits = await db.getAll('outfits');
-  const now = new Date().toISOString();
-  await Promise.all(
-    itemIds.map(async (itemId) => {
-      const item = await db.get('clothing', itemId);
-      if (item) {
-        const remainingDates = allOutfits
-          .filter((outfit) => outfit.id !== id && outfit.itemIds?.includes(itemId))
-          .map((outfit) => outfit.lastUsedDate)
-          .filter((date): date is string => Boolean(date));
-        if (prevLastUsedDate) remainingDates.push(prevLastUsedDate);
-        const latestRemainingDate = remainingDates.sort().pop() ?? null;
-        await db.put('clothing', {
-          ...item,
-          timesWorn: Math.max(0, (item.timesWorn ?? 0) - 1),
-          lastUsedDate: latestRemainingDate,
-          updatedAt: now,
-        });
-      }
-    }),
-  );
-}
-
-export async function dbDeleteOutfit(id: string): Promise<void> {
-  const db = await getDB();
-  await db.delete('outfits', id);
-  const allOI = await db.getAll('outfit_items');
-  const tx = db.transaction('outfit_items', 'readwrite');
-  await Promise.all(
-    allOI.filter((oi) => oi.outfitId === id).map((oi) => tx.store.delete(oi.id)),
-  );
-  await tx.done;
-}
-
-export async function dbAddItemToOutfit(outfitId: string, clothingItemId: string): Promise<void> {
-  const db = await getDB();
-  const row = await db.get('outfits', outfitId);
-  if (!row) return;
-
-  const allOI = await db.getAll('outfit_items');
-  const already = allOI.some(
-    (oi) => oi.outfitId === outfitId && oi.clothingItemId === clothingItemId,
-  );
-  if (already) return;
-
-  const position = allOI.filter((oi) => oi.outfitId === outfitId).length;
-  await db.put('outfit_items', {
-    id: crypto.randomUUID(),
-    outfitId,
-    clothingItemId,
-    position,
-  });
-  await db.put('outfits', {
-    ...row,
-    itemIds: [...(row.itemIds ?? []), clothingItemId],
-  });
-}
-
-export async function dbRemoveItemFromOutfit(
-  outfitId: string,
-  clothingItemId: string,
-): Promise<void> {
-  const db = await getDB();
-  const allOI = await db.getAll('outfit_items');
-  const tx = db.transaction('outfit_items', 'readwrite');
-  await Promise.all(
-    allOI
-      .filter((oi) => oi.outfitId === outfitId && oi.clothingItemId === clothingItemId)
-      .map((oi) => tx.store.delete(oi.id)),
-  );
-  await tx.done;
-
-  const row = await db.get('outfits', outfitId);
-  if (row) {
-    await db.put('outfits', {
-      ...row,
-      itemIds: (row.itemIds ?? []).filter((i) => i !== clothingItemId),
-    });
-  }
-}
-
-// ── Export / Import ───────────────────────────────────────────────────────────
-
-export interface ExportPayload {
-  version: 1;
-  exportedAt: string;
-  clothing: ClothingItem[];
-  outfits: OutfitRow[];
-  outfit_items: OutfitItemRow[];
-}
-
-export async function dbExportAll(): Promise<ExportPayload> {
-  const db = await getDB();
+function hydrateOutfit(stored: StoredOutfit): Outfit {
+  const itemMap = new Map(getAllClothingItems().map((i) => [i.id, i]));
   return {
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    clothing: await db.getAll('clothing'),
-    outfits: await db.getAll('outfits'),
-    outfit_items: await db.getAll('outfit_items'),
+    id: stored.id,
+    name: stored.name,
+    notes: stored.notes,
+    createdAt: stored.createdAt,
+    lastWornDate: stored.lastWornDate,
+    items: stored.itemIds.map((id) => itemMap.get(id)).filter(Boolean) as ClothingItem[],
   };
 }
 
-export async function dbImportAll(payload: ExportPayload): Promise<void> {
-  const db = await getDB();
+export function listOutfits(): Outfit[] {
+  return getAllStoredOutfits().map(hydrateOutfit);
+}
 
-  // Clear existing data
-  const clearTx = db.transaction(['clothing', 'outfits', 'outfit_items'], 'readwrite');
-  await Promise.all([
-    clearTx.objectStore('clothing').clear(),
-    clearTx.objectStore('outfits').clear(),
-    clearTx.objectStore('outfit_items').clear(),
-  ]);
-  await clearTx.done;
+export function createOutfit(name: string, itemIds: number[]): Outfit {
+  const stored = getAllStoredOutfits();
+  const newOutfit: StoredOutfit = {
+    id: nextId(),
+    name,
+    itemIds,
+    createdAt: new Date().toISOString(),
+  };
+  stored.push(newOutfit);
+  saveAllStoredOutfits(stored);
+  return hydrateOutfit(newOutfit);
+}
 
-  // Insert imported data
-  const importTx = db.transaction(['clothing', 'outfits', 'outfit_items'], 'readwrite');
-  await Promise.all([
-    ...payload.clothing.map((item) => importTx.objectStore('clothing').put(item)),
-    ...payload.outfits.map((row) => importTx.objectStore('outfits').put(row)),
-    ...payload.outfit_items.map((oi) => importTx.objectStore('outfit_items').put(oi)),
-  ]);
-  await importTx.done;
+export function updateOutfit(
+  id: number,
+  data: { name?: string; notes?: string | null; lastWornDate?: string | null },
+): Outfit | null {
+  const stored = getAllStoredOutfits();
+  const idx = stored.findIndex((o) => o.id === id);
+  if (idx === -1) return null;
+  stored[idx] = { ...stored[idx], ...data };
+  saveAllStoredOutfits(stored);
+  return hydrateOutfit(stored[idx]);
+}
+
+export function deleteOutfit(id: number): void {
+  saveAllStoredOutfits(getAllStoredOutfits().filter((o) => o.id !== id));
+}
+
+export function addItemToOutfit(outfitId: number, itemId: number): Outfit | null {
+  const stored = getAllStoredOutfits();
+  const idx = stored.findIndex((o) => o.id === outfitId);
+  if (idx === -1) return null;
+  if (!stored[idx].itemIds.includes(itemId)) {
+    stored[idx].itemIds.push(itemId);
+    saveAllStoredOutfits(stored);
+  }
+  return hydrateOutfit(stored[idx]);
+}
+
+export function removeItemFromOutfit(outfitId: number, itemId: number): Outfit | null {
+  const stored = getAllStoredOutfits();
+  const idx = stored.findIndex((o) => o.id === outfitId);
+  if (idx === -1) return null;
+  stored[idx].itemIds = stored[idx].itemIds.filter((id) => id !== itemId);
+  saveAllStoredOutfits(stored);
+  return hydrateOutfit(stored[idx]);
+}
+
+// ── Outfit generator (local random pick per category) ─────────────────────────
+export function generateOutfitItems(excludeCategories: string[] = []): ClothingItem[] {
+  const items = getAllClothingItems().filter(
+    (i) => !excludeCategories.includes(i.category),
+  );
+  const byCategory = new Map<string, ClothingItem[]>();
+  for (const item of items) {
+    const arr = byCategory.get(item.category) ?? [];
+    arr.push(item);
+    byCategory.set(item.category, arr);
+  }
+  const result: ClothingItem[] = [];
+  for (const categoryItems of byCategory.values()) {
+    if (categoryItems.length > 0) {
+      result.push(categoryItems[Math.floor(Math.random() * categoryItems.length)]);
+    }
+  }
+  return result;
 }

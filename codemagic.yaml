@@ -55,107 +55,40 @@ workflows:
           cd artifacts/outfit-generator
           rm -rf ios
           npx cap add ios
+          # cap sync reads node_modules for packages with a "capacitor" field
+          # in package.json and automatically adds them to the Podfile before
+          # running pod install. background-removal-plugin (workspace:*) is
+          # linked into node_modules by pnpm, so it is picked up automatically.
           npx cap sync ios
 
-      - name: Inject local plugins into Xcode project
-        script: |
-          NATIVE_SRC="artifacts/outfit-generator/native"
-          IOS_APP="artifacts/outfit-generator/ios/App/App"
-
-          # ── Step 1: copy plugin source files ─────────────────────────────────
-          # PhotoCleanupPlugin.swift  — Swift implementation (Vision + CoreImage)
-          # PhotoCleanupPlugin.m      — ObjC CAP_PLUGIN macro that registers the
-          #                             plugin with the Capacitor bridge under the
-          #                             JS name "PhotoCleanup".  Without this file
-          #                             the bridge cannot dispatch processPhoto().
-          cp "$NATIVE_SRC/PhotoCleanupPlugin.swift" "$IOS_APP/"
-          echo "Copied PhotoCleanupPlugin.swift"
-          cp "$NATIVE_SRC/PhotoCleanupPlugin.m" "$IOS_APP/"
-          echo "Copied PhotoCleanupPlugin.m"
-
-          # VisionPlugin.swift  — on-device image classification (VNClassifyImageRequest)
-          #                       and OCR (VNRecognizeTextRequest) for wardrobe search
-          # VisionPlugin.m      — ObjC CAP_PLUGIN macro that registers the plugin
-          #                       with the Capacitor bridge under the JS name "Vision".
-          cp "$NATIVE_SRC/VisionPlugin.swift" "$IOS_APP/"
-          echo "Copied VisionPlugin.swift"
-          cp "$NATIVE_SRC/VisionPlugin.m" "$IOS_APP/"
-          echo "Copied VisionPlugin.m"
-
-          # MyViewController.swift — CAPBridgeViewController subclass that calls
-          #                          registerPluginInstance() for both local plugins
-          #                          on capacitorDidLoad().  Overwrites the stub that
-          #                          cap add ios may generate.
-          cp "$NATIVE_SRC/MyViewController.swift" "$IOS_APP/"
-          echo "Copied MyViewController.swift"
-
-          # ── Step 2: add all files to the Xcode project ───────────────────────
-          ruby codemagic_scripts/add_to_xcodeproj.rb
-
-      - name: Compile-check VisionPlugin
-        script: |
-          # Build the App target for testing (compiles all sources including
-          # VisionPlugin.swift) without running tests or producing an archive.
-          # Fails fast if any Swift type-check or framework linkage error exists,
-          # saving a full Codemagic archive cycle.
-          cd artifacts/outfit-generator/ios/App
-          xcodebuild \
-            -workspace App.xcodeproj/project.xcworkspace \
-            -scheme App \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -configuration Debug \
-            ONLY_ACTIVE_ARCH=NO \
-            ARCHS=arm64 \
-            build-for-testing \
-            2>&1 | tee /tmp/vision-compile-check.log
-          # Propagate xcodebuild's exit code through the tee pipe
-          exit ${PIPESTATUS[0]}
-
-      - name: Add export compliance and privacy keys to Info.plist
+      - name: Set export compliance
         script: |
           PLIST="artifacts/outfit-generator/ios/App/App/Info.plist"
-
-          # Export compliance
-          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
-
-          # Camera usage — absence causes TCC SIGABRT crash on first camera access
-          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSCameraUsageDescription Camera is used to photograph your beauty products." "$PLIST"
-
-          # Photo library read
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryUsageDescription Photo library is used to choose photos of your beauty products." "$PLIST"
-
-          # Photo library write
-          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryAddUsageDescription string placeholder" "$PLIST" 2>/dev/null; /usr/libexec/PlistBuddy -c "Set :NSPhotoLibraryAddUsageDescription Photos you take are saved to your library." "$PLIST"
-
-          echo "=== Verifying Info.plist privacy keys ==="
-          /usr/libexec/PlistBuddy -c "Print :ITSAppUsesNonExemptEncryption" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSCameraUsageDescription" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryUsageDescription" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Print :NSPhotoLibraryAddUsageDescription" "$PLIST"
-          echo "=== Done ==="
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" || true
+          # Ensure photo library key is present — Apple will reject without it
+          /usr/libexec/PlistBuddy \
+            -c "Delete :NSPhotoLibraryUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy \
+            -c "Add :NSPhotoLibraryUsageDescription string 'Allow access to your photo library so you can add photos of your clothing items to your digital closet.'" \
+            "$PLIST"
+          # Ensure camera key is present — missing key causes a hard crash on camera access
+          /usr/libexec/PlistBuddy \
+            -c "Delete :NSCameraUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy \
+            -c "Add :NSCameraUsageDescription string 'Allow camera access so you can take photos of your clothing items to add to your digital closet.'" \
+            "$PLIST"
+          # Required for Capacitor Camera to save captured photos back to the photo library
+          /usr/libexec/PlistBuddy \
+            -c "Delete :NSPhotoLibraryAddUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy \
+            -c "Add :NSPhotoLibraryAddUsageDescription string 'My Digital Closet saves clothing photos to your photo library.'" \
+            "$PLIST"
 
       - name: Inject app icon
         script: |
-          ICONSET="artifacts/outfit-generator/ios/App/App/Assets.xcassets/AppIcon.appiconset"
-          mkdir -p "$ICONSET"
-          sips -z 1024 1024 app-store/AppIcon-1024.png --out "$ICONSET/AppIcon-1024.png"
-          cat > "$ICONSET/Contents.json" << 'EOF'
-          {
-            "images": [
-              {
-                "filename": "AppIcon-1024.png",
-                "idiom": "universal",
-                "platform": "ios",
-                "size": "1024x1024"
-              }
-            ],
-            "info": {
-              "author": "xcode",
-              "version": 1
-            }
-          }
-          EOF
+          cd artifacts/outfit-generator
+          cp ../../app-store/AppIcon-1024.png resources/icon.png
+          npx @capacitor/assets@latest generate --ios
 
       - name: Share App scheme
         script: |
@@ -176,8 +109,10 @@ workflows:
       - name: Set version and build number
         script: |
           cd artifacts/outfit-generator/ios/App
-          agvtool new-marketing-version 1.0.5
-          agvtool new-version -all $BUILD_NUMBER
+          # Floor at 125 — builds up to 124 already uploaded to App Store Connect
+          BUILD_NUM=$(( BUILD_NUMBER > 124 ? BUILD_NUMBER : 125 ))
+          agvtool new-marketing-version 1.0.1
+          agvtool new-version -all $BUILD_NUM
 
       - name: Re-apply provisioning profiles after cap sync
         script: |
@@ -210,32 +145,27 @@ workflows:
 
       - name: Export IPA
         script: |
+          # Write the .p8 key to disk so xcodebuild can authenticate with
+          # Apple Developer Portal to resolve provisioning profiles automatically.
+          mkdir -p "$HOME/private_keys"
+          echo "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
           xcodebuild \
             -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/App.xcarchive" \
             -exportOptionsPlist app-store/ExportOptions.plist \
-            -exportPath "$CM_BUILD_DIR/build/ipa"
+            -exportPath "$CM_BUILD_DIR/build/ipa" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8" \
+            -authenticationKeyID "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
+            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"
 
       - name: Upload to TestFlight
         script: |
-          # Use the .p8 key file Codemagic already placed on this machine
-          # for the Developer Portal integration (same key, same ID)
-          KEY_FILE=$(find /Users/builder -name "AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8" 2>/dev/null | head -1)
-          if [ -z "$KEY_FILE" ]; then
-            echo "Exact key not found, searching for any .p8..."
-            KEY_FILE=$(find /Users/builder -name "AuthKey_*.p8" 2>/dev/null | head -1)
-          fi
-          if [ -z "$KEY_FILE" ]; then
-            echo "ERROR: No .p8 key file found on machine"
-            find /Users/builder -name "*.p8" 2>/dev/null || true
-            exit 1
-          fi
-          echo "Using key file: $KEY_FILE"
           app-store-connect publish \
             --path "$CM_BUILD_DIR/build/ipa/App.ipa" \
             --key-id "$APP_STORE_CONNECT_KEY_IDENTIFIER" \
             --issuer-id "$APP_STORE_CONNECT_ISSUER_ID" \
-            --private-key "@file:$KEY_FILE" \
+            --private-key "@env:APP_STORE_CONNECT_PRIVATE_KEY" \
             --testflight
 
     artifacts:

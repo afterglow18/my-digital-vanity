@@ -38,7 +38,7 @@ type = "video"
 title = "Promo Video — 886 × 1920px"
 
 [[outputs]]
-id = "a3HavuQkE-l-Iws9U_PRM"
-uri = "file://attached_assets/4687B251-C621-4728-A2C9-7B319804C284_1783818995995.png"
-type = "image"
-title = "App Icon — My Digital Vanity"
+id = "YrGKaH3wqkiORdoyivTU4"
+uri = "file://attached_assets/app-preview-886x1920.mp4"
+type = "video"
+title = "App Preview 886×1920"

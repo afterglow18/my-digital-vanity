@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.mydigitalvanity.app',
-  appName: 'My Vanity',
+  appId: 'com.mydigitalcloset.app',
+  appName: 'My Closet',
   webDir: 'dist/public',
 
   // -------------------------------------------------------------------------
@@ -15,16 +15,15 @@ const config: CapacitorConfig = {
     backgroundColor: '#F4D6DD',
     // Allow inline media playback (used for wardrobe image previews)
     allowsInlineMediaPlayback: true,
-
-    // Privacy usage descriptions — all three are required for the camera/photo
-    // picker flow.  Missing any one causes a TCC SIGABRT or silent refusal.
+    // Export compliance — app uses only standard HTTPS; no custom encryption
     infoPlist: {
-      NSCameraUsageDescription:
-        'My Digital Vanity needs camera access so you can photograph clothing and accessories to add to your wardrobe.',
-      NSPhotoLibraryUsageDescription:
-        'My Digital Vanity needs access to your photo library so you can choose existing photos of your clothing and accessories.',
-      NSPhotoLibraryAddUsageDescription:
-        'My Digital Vanity saves photos you take with the camera to your library so you can access them later.',
+      ITSAppUsesNonExemptEncryption: false,
+      // Required for camera access — missing key causes crash on iOS/iPadOS
+      NSCameraUsageDescription: "My Digital Closet uses the camera so you can photograph clothing items to add to your wardrobe.",
+      // Required for photo library access (read)
+      NSPhotoLibraryUsageDescription: "My Digital Closet accesses your photo library so you can upload clothing photos to your wardrobe.",
+      // Required for photo library write access — Capacitor Camera saves captured photos to the library
+      NSPhotoLibraryAddUsageDescription: "My Digital Closet saves clothing photos to your photo library.",
     },
   },
 

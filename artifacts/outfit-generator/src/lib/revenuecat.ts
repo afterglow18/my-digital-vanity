@@ -1,293 +1,228 @@
 /**
- * RevenueCat client — wraps @revenuecat/purchases-capacitor.
- *
- * Works in browser (test store) and native iOS (App Store).
- * Entitlement: "unlock"
- * Packages:    $rc_monthly | $rc_annual ($rc_yearly) | $rc_lifetime
- *
- * CRITICAL: initRevenueCat() returns a Promise. All SDK calls internally
- * await _initPromise via ensureInitialized() so there is no race condition
- * between configure() and the first getOfferings()/getCustomerInfo() call.
+ * RevenueCat integration — initializes purchases on iOS and wraps
+ * the purchase/restore flows. All functions are safe to call on web
+ * (they return immediately with sensible defaults).
  */
-import { Purchases } from "@revenuecat/purchases-capacitor";
-import type { PurchasesPackage, PurchasesOfferings } from "@revenuecat/purchases-capacitor";
+
 import { Capacitor } from "@capacitor/core";
-import type { PurchaseProduct, Tier } from "@/types/local";
+import type { PurchasesPackage } from "@revenuecat/purchases-capacitor";
 
+const IOS_KEY  = import.meta.env.VITE_REVENUECAT_IOS_API_KEY  as string | undefined;
 const TEST_KEY = import.meta.env.VITE_REVENUECAT_TEST_API_KEY as string | undefined;
-// RC iOS public keys are distributed in every app bundle — safe to hardcode.
-// The env var is tried first so the key can still be rotated via Codemagic
-// without a code change; the hardcoded value is the fallback.
-const IOS_KEY  =
-  (import.meta.env.VITE_REVENUECAT_IOS_API_KEY as string | undefined) ||
-  "appl_ZhdCoWtbocoFgCAlmYmHzWmPzWN";
 
-export const ENTITLEMENT_ID = "unlock";
-
-/** RC package identifiers for each of our product keys */
-const PACKAGE_RC_ID: Record<string, string> = {
-  monthly:  "$rc_monthly",
-  yearly:   "$rc_annual",   // our key "yearly" = RC package type "ANNUAL"
-  lifetime: "$rc_lifetime",
-};
-
-/** Which tier each product unlocks */
-export const PRODUCT_TIER_MAP: Record<PurchaseProduct, Tier> = {
-  monthly:  "unlock",
-  yearly:   "unlock",
-  lifetime: "unlock",
-  premium:  "premium",
-};
-
-// ── Init promise ──────────────────────────────────────────────────────────────
-
+// Track initialization so paywalls can await it before fetching offerings.
 let _initPromise: Promise<void> | null = null;
 let _initDone = false;
 
-/**
- * Initialize RevenueCat. Returns a Promise that resolves when configure()
- * has finished. Safe to call multiple times — subsequent calls return the
- * same Promise so there is no duplicate configure race.
- * No-op on web (returns immediately resolved Promise).
- */
-export function initRevenueCat(): Promise<void> {
-  if (_initDone) return Promise.resolve();
+/** Initialize RevenueCat. Call once on app startup before first render. */
+export async function initializeRevenueCat(): Promise<void> {
+  if (!Capacitor.isNativePlatform()) return;
+  if (_initDone) return;
   if (_initPromise) return _initPromise;
-
-  if (!Capacitor.isNativePlatform()) {
-    console.log("[RevenueCat] Web environment — SDK skipped (expected in dev/preview)");
-    _initDone = true;
-    return Promise.resolve();
-  }
 
   const apiKey = IOS_KEY ?? TEST_KEY;
   if (!apiKey) {
-    console.warn("[RevenueCat] No API key found — in-app purchases disabled");
-    _initDone = true;
-    return Promise.resolve();
+    console.warn("[RevenueCat] No API key configured — in-app purchases unavailable.");
+    return;
   }
 
-  console.log("[RevenueCat] Configuring... (key prefix:", apiKey.slice(0, 8) + "...)");
-
-  _initPromise = Purchases.configure({ apiKey })
-    .then(() => {
-      _initDone = true;
-      console.log("[RevenueCat] Configure complete ✓");
-    })
-    .catch((e: unknown) => {
-      // Don't block callers forever on a configure error — mark done and log
-      _initDone = true;
-      console.error("[RevenueCat] Configure error:", e);
-    });
+  _initPromise = (async () => {
+    const { Purchases } = await import("@revenuecat/purchases-capacitor");
+    await Purchases.configure({ apiKey });
+    _initDone = true;
+    console.log("[RevenueCat] Initialized.");
+  })();
 
   return _initPromise;
 }
 
-/** Await RC initialization before any SDK call. */
+/** Wait for RC to finish initializing before making SDK calls. */
 async function ensureInitialized(): Promise<void> {
   if (_initDone) return;
   if (_initPromise) return _initPromise;
-  // If initRevenueCat() was never called (e.g. timing edge), init now
-  return initRevenueCat();
+  // If initializeRevenueCat() was never called (e.g. timing edge), init now.
+  return initializeRevenueCat();
 }
 
-// ── Package type ──────────────────────────────────────────────────────────────
+// ── Offerings ────────────────────────────────────────────────────────────────
 
 export interface RCPackage {
-  /** Our internal product key */
-  product: PurchaseProduct;
-  /** Native package object — pass directly to purchasePackage() */
+  /** Our internal product key (monthly | annual | lifetime) */
+  product: "monthly" | "annual" | "lifetime";
+  /** Native package — passed directly to purchasePackage() */
   pkg: PurchasesPackage;
-  /** Localised price string from StoreKit e.g. "$1.99" */
+  /** Localised price string from the store e.g. "$1.99" */
   priceString: string;
 }
 
 /**
- * Fetch all available packages from the current RevenueCat offering.
+ * Fetch the current RevenueCat offering and map packages to our product keys.
  *
- * - Awaits RC init before calling the SDK (no race condition).
- * - Falls back to the first available offering if no default is set.
- * - Uses a three-tier package lookup per product so nothing is missed.
- * - Returns [] on web (dev always runs in free mode).
- * - Throws on failure so callers can show error + retry UI.
+ * Returns null on web (dev always runs in free mode).
+ * Throws on native if offerings cannot be loaded so callers can show a retry.
  */
-export async function fetchPackages(): Promise<RCPackage[]> {
-  if (!Capacitor.isNativePlatform()) {
-    console.log("[RevenueCat] fetchPackages: web — returning []");
-    return [];
-  }
+export async function fetchRCPackages(): Promise<RCPackage[]> {
+  if (!Capacitor.isNativePlatform()) return [];
 
   await ensureInitialized();
 
-  console.log("[RevenueCat] Fetching offerings...");
-  let offerings: PurchasesOfferings;
-  try {
-    offerings = await Purchases.getOfferings();
-  } catch (e) {
-    console.error("[RevenueCat] getOfferings() threw:", e);
-    throw e;
-  }
+  const { Purchases } = await import("@revenuecat/purchases-capacitor");
+  const offerings = await Purchases.getOfferings();
 
-  // Prefer the dashboard-selected default offering; fall back to first available
-  const current =
+  // Use the default (current) offering; fall back to the first available one.
+  const offering =
     offerings.current ??
-    (offerings.all ? (Object.values(offerings.all)[0] ?? null) : null);
+    (offerings.all ? Object.values(offerings.all)[0] ?? null : null);
 
-  if (!current) {
-    const allKeys = offerings.all ? Object.keys(offerings.all) : [];
+  if (!offering) {
     console.error(
-      "[RevenueCat] No offering available.",
-      "All offerings:", allKeys.length ? allKeys : "none",
-      "→ In RevenueCat dashboard: set a Default offering and ensure products are synced with App Store Connect.",
+      "[RevenueCat] No offering available. " +
+      "Check that a 'Default' offering is set in the RevenueCat dashboard " +
+      "and products are synced with App Store Connect.",
     );
-    throw new Error(
-      "No offering found in RevenueCat. Ensure a Default offering is configured in the dashboard.",
-    );
+    throw new Error("No offering configured in RevenueCat.");
   }
 
-  console.log(
-    `[RevenueCat] Offering '${current.identifier}' loaded.`,
-    `Packages: ${current.availablePackages.map(p => `${p.identifier}(${p.packageType})`).join(", ")}`,
-  );
+  const productKeys: Array<"monthly" | "annual" | "lifetime"> = ["monthly", "annual", "lifetime"];
 
-  const products: PurchaseProduct[] = ["monthly", "yearly", "lifetime"];
+  // Three-tier lookup per plan key:
+  // 1. RC shortcut (matches by packageType — works regardless of package identifier)
+  // 2. Standard RC package identifier ($rc_*)
+  // 3. App Store product identifier (mdc_* — matches even if packageType wasn't set)
+  const rcIdentifiers: Record<string, string> = {
+    monthly:  "$rc_monthly",
+    annual:   "$rc_annual",
+    lifetime: "$rc_lifetime",
+  };
+  const productIdentifiers: Record<string, string> = {
+    monthly:  "mdc_monthly",
+    annual:   "mdc_annual",
+    lifetime: "mdc_lifetime",
+  };
+
   const result: RCPackage[] = [];
 
-  for (const product of products) {
-    const rcId = PACKAGE_RC_ID[product];
-
-    // Three-tier lookup:
-    // 1. RC offering shortcut property (.monthly / .annual / .lifetime) —
-    //    matches by packageType regardless of package identifier string
-    // 2. RC package identifier ($rc_monthly / $rc_annual / $rc_lifetime)
-    // 3. packageType string match (safety net for custom identifiers)
+  for (const key of productKeys) {
     const shortcut =
-      product === "yearly"   ? current.annual   :
-      product === "lifetime" ? current.lifetime  :
-                               current.monthly;
+      key === "annual"   ? offering.annual   :
+      key === "lifetime" ? offering.lifetime  :
+                           offering.monthly;
 
     const pkg =
       shortcut ??
-      current.availablePackages.find(p => p.identifier === rcId) ??
-      current.availablePackages.find(p => p.packageType === rcId) ??
+      offering.availablePackages.find((p) => p.identifier === rcIdentifiers[key]) ??
+      offering.availablePackages.find((p) => p.product.identifier === productIdentifiers[key]) ??
       null;
 
     if (pkg) {
-      result.push({ product, pkg, priceString: pkg.product.priceString });
-      console.log(
-        `[RevenueCat] ✓ '${product}': ${pkg.product.priceString}`,
-        `(identifier: ${pkg.identifier}, type: ${pkg.packageType}, storeId: ${pkg.product.identifier})`,
-      );
+      result.push({
+        product:     key,
+        pkg,
+        priceString: pkg.product.priceString,
+      });
     } else {
       console.warn(
-        `[RevenueCat] ✗ Package '${product}' not found.`,
-        `Tried shortcut, identifier '${rcId}'.`,
-        `Available: ${current.availablePackages.map(p => `${p.identifier}/${p.packageType}`).join(", ")}`,
-        `→ Ensure the package is added to the offering in the RevenueCat dashboard.`,
+        `[RevenueCat] Package '${key}' not found. ` +
+        `Tried shortcut, identifier '${rcIdentifiers[key]}', ` +
+        `and productIdentifier '${productIdentifiers[key]}' ` +
+        `in offering '${offering.identifier}'.`,
       );
     }
   }
 
   if (result.length === 0) {
     throw new Error(
-      "Offering found but no monthly/yearly/lifetime packages present. " +
-      "Add packages to the current offering in the RevenueCat dashboard.",
+      "Offering found but contains no matching packages. " +
+      "Ensure monthly, annual, and lifetime packages are added to the current offering.",
     );
   }
 
-  console.log(`[RevenueCat] fetchPackages complete — ${result.length}/3 packages loaded.`);
   return result;
 }
 
 /**
- * Fetch the offering and find the package for a single product.
- * Uses ensureInitialized() so it is safe to call at any time.
+ * Check whether the user has an active "unlock" or "premium" entitlement.
+ * Returns false on web (dev always runs in free mode).
  */
-export async function getPackageForProduct(
-  product: PurchaseProduct,
-): Promise<PurchasesPackage | null> {
-  if (!Capacitor.isNativePlatform()) return null;
-  await ensureInitialized();
-
-  const rcId = PACKAGE_RC_ID[product] ?? ("$rc_" + product);
-  console.log(`[RevenueCat] getPackageForProduct('${product}') — RC id: ${rcId}`);
-
-  let offerings: PurchasesOfferings;
+export async function checkSubscription(): Promise<"unlock" | "premium" | false> {
+  if (!Capacitor.isNativePlatform()) return false;
   try {
-    offerings = await Purchases.getOfferings();
-  } catch (e) {
-    console.error("[RevenueCat] getOfferings() threw in getPackageForProduct:", e);
-    return null;
+    await ensureInitialized();
+    const { Purchases } = await import("@revenuecat/purchases-capacitor");
+    const { customerInfo } = await Purchases.getCustomerInfo();
+    if (customerInfo.entitlements.active["premium"]) return "premium";
+    if (customerInfo.entitlements.active["unlock"])  return "unlock";
+    return false;
+  } catch (err) {
+    console.error("[RevenueCat] checkSubscription error:", err);
+    return false;
   }
-
-  const current =
-    offerings.current ??
-    (offerings.all ? (Object.values(offerings.all)[0] ?? null) : null);
-
-  if (!current) {
-    console.error("[RevenueCat] getPackageForProduct: no offering found");
-    return null;
-  }
-
-  const shortcut =
-    product === "yearly"   ? current.annual   :
-    product === "lifetime" ? current.lifetime  :
-                             current.monthly;
-
-  const pkg =
-    shortcut ??
-    current.availablePackages.find((p: PurchasesPackage) => p.identifier === rcId) ??
-    current.availablePackages.find((p: PurchasesPackage) => p.packageType === rcId) ??
-    null;
-
-  if (!pkg) {
-    console.warn(
-      `[RevenueCat] getPackageForProduct('${product}'): not found.`,
-      `Available: ${current.availablePackages.map((p: PurchasesPackage) => p.identifier).join(", ")}`,
-    );
-  }
-
-  return pkg;
 }
 
-/** Check whether the user currently has the entitlement active. */
-export async function getActiveEntitlement(): Promise<boolean> {
-  if (!Capacitor.isNativePlatform()) return false;
-  await ensureInitialized();
-  const { customerInfo } = await Purchases.getCustomerInfo();
-  const active = ENTITLEMENT_ID in (customerInfo.entitlements?.active ?? {});
-  console.log(
-    `[RevenueCat] getActiveEntitlement: ${active}`,
-    `Active entitlements: ${Object.keys(customerInfo.entitlements?.active ?? {}).join(", ") || "none"}`,
-  );
-  return active;
+export type PurchaseResult = "success" | "cancelled" | "unavailable";
+
+/**
+ * Purchase a pre-fetched RC package. Always use a package from fetchRCPackages()
+ * to avoid a redundant getOfferings() call and to surface errors at paywall-load
+ * time rather than at purchase-tap time.
+ */
+export async function purchaseRCPackage(pkg: PurchasesPackage): Promise<PurchaseResult> {
+  if (!Capacitor.isNativePlatform()) {
+    console.warn("[RevenueCat] In-app purchases unavailable on web.");
+    return "unavailable";
+  }
+  try {
+    await ensureInitialized();
+    const { Purchases } = await import("@revenuecat/purchases-capacitor");
+    const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
+    if (customerInfo.entitlements.active["premium"]) return "success";
+    if (customerInfo.entitlements.active["unlock"])  return "success";
+    return "cancelled";
+  } catch (err: unknown) {
+    const code = String((err as { code?: string })?.code ?? "");
+    const msg  = String((err as Error)?.message ?? "");
+    if (
+      code.includes("PURCHASE_CANCELLED") ||
+      code === "1" ||
+      msg.toLowerCase().includes("cancel")
+    ) {
+      return "cancelled";
+    }
+    console.error("[RevenueCat] purchaseRCPackage error:", err);
+    return "unavailable";
+  }
 }
 
 /**
- * Purchase a pre-fetched package. Guards with ensureInitialized() so it is
- * safe to call at any point after initRevenueCat() is invoked.
- * Returns the raw customerInfo so callers can inspect entitlements.
+ * @deprecated Use purchaseRCPackage(pkg) with a pre-fetched package instead.
+ * Kept for any callers that haven't migrated yet.
  */
-export async function purchaseRCPackage(pkg: PurchasesPackage): Promise<import("@revenuecat/purchases-capacitor").CustomerInfo> {
-  await ensureInitialized();
-  console.log(`[RevenueCat] purchasePackage — identifier: ${pkg.identifier}, storeProduct: ${pkg.product.identifier}`);
-  const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
-  console.log(
-    `[RevenueCat] Purchase complete. Active entitlements: ${Object.keys(customerInfo.entitlements?.active ?? {}).join(", ") || "none"}`,
-  );
-  return customerInfo;
+export async function purchaseProduct(
+  product: "monthly" | "annual" | "lifetime",
+): Promise<PurchaseResult> {
+  try {
+    const packages = await fetchRCPackages();
+    const found = packages.find((p) => p.product === product);
+    if (!found) return "unavailable";
+    return purchaseRCPackage(found.pkg);
+  } catch (err) {
+    console.error("[RevenueCat] purchaseProduct error:", err);
+    return "unavailable";
+  }
 }
 
-/** Restore previous purchases and return whether the entitlement is now active. */
-export async function restoreAndCheck(): Promise<boolean> {
+/** Restore previous purchases. Returns the active tier, or false if none. */
+export async function restorePurchases(): Promise<"unlock" | "premium" | false> {
   if (!Capacitor.isNativePlatform()) return false;
-  await ensureInitialized();
-  console.log("[RevenueCat] Restoring purchases...");
-  const { customerInfo } = await Purchases.restorePurchases();
-  const active = ENTITLEMENT_ID in (customerInfo.entitlements?.active ?? {});
-  console.log(
-    `[RevenueCat] Restore result: ${active}`,
-    `Active entitlements: ${Object.keys(customerInfo.entitlements?.active ?? {}).join(", ") || "none"}`,
-  );
-  return active;
+  try {
+    await ensureInitialized();
+    const { Purchases } = await import("@revenuecat/purchases-capacitor");
+    const { customerInfo } = await Purchases.restorePurchases();
+    if (customerInfo.entitlements.active["premium"]) return "premium";
+    if (customerInfo.entitlements.active["unlock"])  return "unlock";
+    return false;
+  } catch (err) {
+    console.error("[RevenueCat] restorePurchases error:", err);
+    return false;
+  }
 }
