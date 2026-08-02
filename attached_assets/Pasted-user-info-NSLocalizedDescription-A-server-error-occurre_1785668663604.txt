@@ -1,0 +1,49 @@
+user-info" : {
+            "NSLocalizedDescription" : "A server error occurred.",
+            "code" : "90062",
+            "description" : "This bundle is invalid. The value for key CFBundleShortVersionString [1.0.4] in the Info.plist file must contain a higher version than that of the previously approved version [1.0.4]. Please find more information about CFBundleShortVersionString at https://developer.apple.com/documentation/bundleresources/information_property_list/cfbundleshortversionstring"
+          }
+        }
+      ],
+      "user-info" : {
+        "NSLocalizedDescription" : "This bundle is invalid. The value for key CFBundleShortVersionString [1.0.4] in the Info.plist file must contain a higher version than that of the previously approved version [1.0.4]. Please find more information about CFBundleShortVersionString at https://developer.apple.com/documentation/bundleresources/information_property_list/cfbundleshortversionstring",
+        "NSLocalizedFailureReason" : "The server’s response was: ‘{\n    code = 90062;\n    description = \"This bundle is invalid. The value for key CFBundleShortVersionString [1.0.4] in the Info.plist file must contain a higher version than that of the previously approved version [1.0.4]. Please find more information about CFBundleShortVersionString at https://developer.apple.com/documentation/bundleresources/information_property_list/cfbundleshortversionstring\";\n}’.",
+        "NSUnderlyingError" : "Error Domain=IrisAPI Code=-19241 \"A server error occurred.\" UserInfo={code=90062, NSLocalizedDescription=A server error occurred., description=This bundle is invalid. The value for key CFBundleShortVersionString [1.0.4] in the Info.plist file must contain a higher version than that of the previously approved version [1.0.4]. Please find more information about CFBundleShortVersionString at https://developer.apple.com/documentation/bundleresources/information_property_list/cfbundleshortversionstring}",
+        "iris-code" : "90062"
+      }
+    },
+    {
+      "code" : 90186,
+      "message" : "Invalid Pre-Release Train. The train version '1.0.4' is closed for new build submissions",
+      "underlying-errors" : [
+        {
+          "code" : -19241,
+          "message" : "A server error occurred.",
+          "underlying-errors" : [
+
+          ],
+          "user-info" : {
+            "NSLocalizedDescription" : "A server error occurred.",
+            "code" : "90186",
+            "description" : "Invalid Pre-Release Train. The train version '1.0.4' is closed for new build submissions"
+          }
+        }
+      ],
+      "user-info" : {
+        "NSLocalizedDescription" : "Invalid Pre-Release Train. The train version '1.0.4' is closed for new build submissions",
+        "NSLocalizedFailureReason" : "The server’s response was: ‘{\n    code = 90186;\n    description = \"Invalid Pre-Release Train. The train version '1.0.4' is closed for new build submissions\";\n}’.",
+        "NSUnderlyingError" : "Error Domain=IrisAPI Code=-19241 \"A server error occurred.\" UserInfo={code=90186, NSLocalizedDescription=A server error occurred., description=Invalid Pre-Release Train. The train version '1.0.4' is closed for new build submissions}",
+        "iris-code" : "90186"
+      }
+    }
+  ],
+  "tool-path" : "/Applications/Xcode-26.4.app/Contents/SharedFrameworks/ContentDelivery.framework/Resources",
+  "tool-version" : "26.30.4 (173004)"
+}
+
+Failed to upload archive at "/Users/builder/clone/build/ipa/App.ipa"
+Failed to publish /Users/builder/clone/build/ipa/App.ipa
+
+
+Build failed :|
+Step 15 script `Upload to TestFlight` exited with status code 1
