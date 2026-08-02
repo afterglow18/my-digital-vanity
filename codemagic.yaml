@@ -69,13 +69,13 @@ workflows:
           /usr/libexec/PlistBuddy \
             -c "Delete :NSPhotoLibraryUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy \
-            -c "Add :NSPhotoLibraryUsageDescription string 'Allow access to your photo library so you can add photos of your clothing items to your digital closet.'" \
+            -c "Add :NSPhotoLibraryUsageDescription string 'Allow access to your photo library so you can add photos of your clothing items to your digital vanity.'" \
             "$PLIST"
           # Ensure camera key is present — missing key causes a hard crash on camera access
           /usr/libexec/PlistBuddy \
             -c "Delete :NSCameraUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy \
-            -c "Add :NSCameraUsageDescription string 'Allow camera access so you can take photos of your clothing items to add to your digital closet.'" \
+            -c "Add :NSCameraUsageDescription string 'Allow camera access so you can take photos of your clothing items to add to your digital vanity.'" \
             "$PLIST"
           # Required for Capacitor Camera to save captured photos back to the photo library
           /usr/libexec/PlistBuddy \
