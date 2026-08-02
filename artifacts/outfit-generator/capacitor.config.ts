@@ -19,11 +19,11 @@ const config: CapacitorConfig = {
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
       // Required for camera access — missing key causes crash on iOS/iPadOS
-      NSCameraUsageDescription: "My Digital Closet uses the camera so you can photograph clothing items to add to your wardrobe.",
+      NSCameraUsageDescription: "My Digital Vanity uses the camera so you can photograph clothing items to add to your wardrobe.",
       // Required for photo library access (read)
-      NSPhotoLibraryUsageDescription: "My Digital Closet accesses your photo library so you can upload clothing photos to your wardrobe.",
+      NSPhotoLibraryUsageDescription: "My Digital Vanity accesses your photo library so you can upload clothing photos to your wardrobe.",
       // Required for photo library write access — Capacitor Camera saves captured photos to the library
-      NSPhotoLibraryAddUsageDescription: "My Digital Closet saves clothing photos to your photo library.",
+      NSPhotoLibraryAddUsageDescription: "My Digital Vanity saves clothing photos to your photo library.",
     },
   },
 

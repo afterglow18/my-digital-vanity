@@ -127,7 +127,7 @@ export function PremiumSheet({ onClose }: Props) {
         <div className="flex-shrink-0">
           <h1 className="font-display font-black uppercase leading-none tracking-tight"
               style={{ fontSize: "clamp(1.55rem, 7.5vw, 2.1rem)", color: "#0a0a0a" }}>
-            Unlock Your Unlimited<br />Digital Closet
+            Unlock Your Unlimited<br />Digital Vanity
           </h1>
           <p className="text-xs text-black/45 font-semibold mt-1">
             A premium feature — unlock it once.

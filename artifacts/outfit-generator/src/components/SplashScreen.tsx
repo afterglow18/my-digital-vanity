@@ -1,7 +1,7 @@
 /**
  * SplashScreen — three-phase intro on every app launch.
  * 1. Hero image (auto-advances after 2.5 s)
- * 2. Yellow doors + "Enter Closet" button
+ * 2. Yellow doors + "Enter Vanity" button
  * 3. Doors swing open → wardrobe
  */
 import { useState, useEffect } from "react";
@@ -70,7 +70,7 @@ export default function SplashScreen({ onEnter }: Props) {
                   textShadow: "0 2px 12px rgba(0,0,0,0.5)",
                 }}
               >
-                My Digital<br />Closet
+                My Digital<br />Vanity
               </h1>
             </div>
           </motion.div>
@@ -150,7 +150,7 @@ export default function SplashScreen({ onEnter }: Props) {
                     textShadow: "0 2px 12px rgba(0,0,0,0.4)",
                   }}
                 >
-                  My Digital<br />Closet
+                  My Digital<br />Vanity
                 </h1>
               </div>
 
@@ -162,7 +162,7 @@ export default function SplashScreen({ onEnter }: Props) {
                            shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 style={{ background: "#F0C030" }}
               >
-                Enter Closet ✨
+                Enter Vanity ✨
               </motion.button>
 
               <div className="flex items-center gap-4">

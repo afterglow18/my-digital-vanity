@@ -56,7 +56,7 @@ export function useBiometricLock(): BiometricLock {
     try {
       await NativeBiometric.verifyIdentity({
         reason,
-        title: "My Digital Closet",
+        title: "My Digital Vanity",
         useFallback: false,
       });
       return true;

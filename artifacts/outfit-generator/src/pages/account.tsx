@@ -88,7 +88,7 @@ export default function AccountPage() {
       className="flex flex-col gap-5 px-4 py-6 max-w-md mx-auto"
       style={{ paddingTop: "max(24px, env(safe-area-inset-top))" }}
     >
-      <h1 className="font-display font-bold text-3xl uppercase tracking-tight">My Digital Closet</h1>
+      <h1 className="font-display font-bold text-3xl uppercase tracking-tight">My Digital Vanity</h1>
 
       {/* ── Subscription ───────────────────────────────────────────────────── */}
       <section className="border-2 border-black rounded-2xl bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] p-4 flex flex-col gap-3">
@@ -212,7 +212,7 @@ export default function AccountPage() {
       <section className="border-2 border-black rounded-2xl bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] p-4 flex flex-col gap-2">
         <div className="flex items-center gap-2 mb-1">
           <span className="text-2xl">💛</span>
-          <h2 className="font-display font-bold text-lg uppercase tracking-tight">My Digital Closet</h2>
+          <h2 className="font-display font-bold text-lg uppercase tracking-tight">My Digital Vanity</h2>
         </div>
         <p className="text-sm text-black/60">Version 1.0.0</p>
         <p className="text-sm text-black/60 leading-snug">
