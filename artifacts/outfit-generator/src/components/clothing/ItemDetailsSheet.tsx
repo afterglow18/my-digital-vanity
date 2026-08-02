@@ -5,7 +5,7 @@
  */
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check, BookmarkPlus } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
 import { getListOutfitsQueryKey, useListOutfits, useAddItemToOutfit, useRemoveItemFromOutfit } from "@/hooks/useLocalOutfits";
@@ -333,7 +333,7 @@ export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook =
                              shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
                              active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
                 >
-                  <BookmarkPlus className="w-4 h-4" />
+                  <span className="text-base leading-none">💄</span>
                   Add to Lookbook
                 </button>
               ) : (
