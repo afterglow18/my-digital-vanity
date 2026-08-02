@@ -6,17 +6,23 @@
  *
  * Version scheme (matches visionWeb.ts constants):
  *   0 = unanalyzed
- *   1 = iOS Vision (labels + text)
- *   4 = web canvas color extraction (current algorithm, with labels)
- *   5 = LEGACY — was incorrectly marked "empty" due to a URL-resolution bug;
- *       must be retried so items get a real analysis
- *   6 = web analyzed correctly, no foreground colors found — do NOT retry
+ *   2 = iOS Vision v2 (labels + text, with canvas colors merged in)
+ *   4 = web canvas v4 (legacy — had a URL-resolution + draw bug)
+ *   5 = web canvas v5 (current algorithm — correct draw + extended pink/rose)
+ *   6 = (reserved)
+ *  100 = WEB_EMPTY_VERSION — analyzed correctly, no foreground colors found (do NOT retry)
  *
- * On web  : run if visionVersion is NOT 4 (correctly analyzed) and NOT 6 (truly empty)
- * On native: run if visionVersion < 1 (i.e. 0)
+ * On web  : run if visionVersion is NOT WEB_VISION_VERSION (5) and NOT WEB_EMPTY_VERSION (100)
+ * On native: run if visionVersion < NATIVE_VISION_VERSION (2)
+ *
+ * Progress: a sonner toast is shown while backfilling and dismissed when done.
+ * The React Query cache is invalidated after every item update so search
+ * results start appearing as soon as the first item is indexed, not only
+ * after the entire wardrobe has been processed.
  */
 
 import { useEffect, useRef } from 'react';
+import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 import { dbListClothing, dbUpdateClothing } from '@/lib/db';
 import { getImageUrl } from '@/lib/utils';
@@ -25,7 +31,11 @@ import { queryClient } from '@/lib/queryClient';
 import { getListClothingQueryKey } from '@/hooks/useLocalWardrobe';
 
 import { NATIVE_VISION_VERSION } from '@/lib/visionAnalysis';
+
 const DELAY_MS = 350;
+/** Invalidate the clothing query cache at most every N updates to avoid
+ *  flooding React Query with invalidations on large wardrobes. */
+const INVALIDATE_EVERY = 5;
 
 function delay(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
@@ -71,6 +81,7 @@ export function useVisionIndexer() {
     runningRef.current = true;
 
     (async () => {
+      const toastId = 'vision-indexer';
       try {
         const items = await dbListClothing();
         const isNative = Capacitor.isNativePlatform();
@@ -79,13 +90,19 @@ export function useVisionIndexer() {
           if (!item.imageObjectPath) return false;
           const v = item.visionVersion ?? 0;
           if (isNative) return v < NATIVE_VISION_VERSION;
-          // Re-run anything below the current algorithm version; skip only v=WEB_VISION_VERSION
-          // (correctly analyzed by current algorithm) and v=WEB_EMPTY_VERSION (truly empty).
+          // Re-run anything below the current algorithm version; skip only
+          // WEB_VISION_VERSION (correctly analyzed) and WEB_EMPTY_VERSION (truly empty).
           return v !== WEB_VISION_VERSION && v !== WEB_EMPTY_VERSION;
         });
+
         if (needsIndexing.length === 0) return;
 
-        let updatedAny = false;
+        const total = needsIndexing.length;
+        let done = 0;
+
+        // Show a persistent loading toast so the user knows work is happening.
+        // We update its message as items are processed.
+        toast.loading(`Indexing photos… 0 / ${total}`, { id: toastId, duration: Infinity });
 
         for (const item of needsIndexing) {
           // Resolve storage key → actual URL before analysis
@@ -111,9 +128,8 @@ export function useVisionIndexer() {
                 visionVersion: version,
               });
             }
-            updatedAny = true;
           } catch {
-            // Persist legacy sentinel 5 → new empty 6 so we don't retry this item endlessly
+            // Persist a sentinel so we don't retry this item endlessly.
             await dbUpdateClothing(item.id, {
               visionLabels:  [],
               visionText:    [],
@@ -121,15 +137,25 @@ export function useVisionIndexer() {
             }).catch(() => {});
           }
 
+          done++;
+          toast.loading(`Indexing photos… ${done} / ${total}`, { id: toastId, duration: Infinity });
+
+          // Invalidate the clothing cache periodically so search results
+          // start appearing well before the full backfill completes.
+          if (done % INVALIDATE_EVERY === 0) {
+            await queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
+          }
+
           await delay(DELAY_MS);
         }
 
-        // Invalidate the clothing cache so search picks up the new labels immediately
-        if (updatedAny) {
-          await queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
-        }
+        // Final invalidation to pick up any items in the last partial batch.
+        await queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
+
+        toast.success('Photo search ready', { id: toastId, duration: 3000 });
       } catch {
-        // Never crash the app
+        // Never crash the app; dismiss any lingering toast silently.
+        toast.dismiss(toastId);
       } finally {
         runningRef.current = false;
       }
