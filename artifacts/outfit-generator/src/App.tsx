@@ -12,6 +12,8 @@ import { useState, useEffect } from 'react';
 import { initRevenueCat } from '@/lib/revenuecat';
 import { syncTierFromRevenueCat } from '@/hooks/useEntitlements';
 import { App as CapApp } from '@capacitor/app';
+import { Toaster } from 'sonner';
+import { useVisionIndexer } from '@/hooks/useVisionIndexer';
 
 // Initialise RevenueCat, then sync entitlements AFTER configure() resolves.
 // Using .then() ensures syncTierFromRevenueCat never races with configure().
@@ -65,6 +67,9 @@ function AppShell() {
     return () => { listenerPromise.then(h => h.remove()); };
   }, []);
 
+  // Background photo analysis — runs once per cold launch, non-blocking
+  useVisionIndexer();
+
   return <AppContent />;
 }
 
@@ -72,6 +77,7 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppShell />
+      <Toaster position="bottom-center" richColors={false} />
     </QueryClientProvider>
   );
 }

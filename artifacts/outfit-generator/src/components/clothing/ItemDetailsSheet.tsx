@@ -5,10 +5,10 @@
  */
 import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check } from "lucide-react";
+import { X, Heart, Trash2, Save, ChevronDown, Sparkles, Loader2, Check, BookmarkPlus } from "lucide-react";
 import type { ClothingItem, ClothingItemUpdateCategory } from "@/types/local";
 import { useUpdateClothingItem, useDeleteClothingItem, getListClothingQueryKey } from "@/hooks/useLocalWardrobe";
-import { getListOutfitsQueryKey } from "@/hooks/useLocalOutfits";
+import { getListOutfitsQueryKey, useListOutfits, useAddItemToOutfit, useRemoveItemFromOutfit } from "@/hooks/useLocalOutfits";
 import { useQueryClient } from "@tanstack/react-query";
 import { getImageUrl } from "@/lib/utils";
 import { removeBackground } from "@/lib/backgroundRemoval";
@@ -79,6 +79,9 @@ interface ItemDetailsSheetProps {
   item: ClothingItem | null;
   onClose: () => void;
   onDeleted?: () => void;
+  /** When true, show "Add to Lookbook" instead of "Clean Up Photo".
+   *  Pass as true from search results and the favorites page. */
+  showAddToLookbook?: boolean;
 }
 
 interface FormState {
@@ -119,10 +122,11 @@ function isDirty(form: FormState, item: ClothingItem): boolean {
   );
 }
 
-export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetProps) {
+export function ItemDetailsSheet({ item, onClose, onDeleted, showAddToLookbook = false }: ItemDetailsSheetProps) {
   const [form, setForm]                   = useState<FormState | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [timesUsedInput, setTimesUsedInput] = useState("0");
+  const [showLookbookPicker, setShowLookbookPicker] = useState(false);
 
   // Local image URL — starts from item, updates immediately when user picks a cleaned version
   const [localImageUrl, setLocalImageUrl] = useState<string | null>(null);
@@ -144,6 +148,9 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
   const updateItem  = useUpdateClothingItem();
   const deleteItem  = useDeleteClothingItem();
   const queryClient = useQueryClient();
+  const { data: outfits } = useListOutfits();
+  const addToOutfit      = useAddItemToOutfit();
+  const removeFromOutfit = useRemoveItemFromOutfit();
 
   useEffect(() => {
     if (item) {
@@ -315,39 +322,54 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
             />
           </div>
 
-          {/* Clean Up Photo button — all platforms via JS/WASM */}
+          {/* Photo action button — Clean Up Photo OR Add to Lookbook */}
           {item.imageObjectPath && (
             <div className="px-4 py-2 bg-white border-t-2 border-black/10 flex flex-col gap-1.5">
-              <button
-                onClick={handleCleanUpPhoto}
-                disabled={cleanupProcessing || alreadyCleaned}
-                className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
-                           font-bold uppercase border-2 border-black bg-white
-                           shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
-                           active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
-                           transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {cleanupProcessing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    {removalProgress?.stage === "loading"
-                      ? `Downloading… ${removalProgress.pct}%`
-                      : "Removing background…"}
-                  </>
-                ) : alreadyCleaned ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    Background Removed
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4" />
-                    Clean Up Photo
-                  </>
-                )}
-              </button>
-              {cleanupError && (
-                <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
+              {showAddToLookbook ? (
+                <button
+                  onClick={() => setShowLookbookPicker(true)}
+                  className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                             font-bold uppercase border-2 border-black bg-white
+                             shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                             active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
+                >
+                  <BookmarkPlus className="w-4 h-4" />
+                  Add to Lookbook
+                </button>
+              ) : (
+                <>
+                  <button
+                    onClick={handleCleanUpPhoto}
+                    disabled={cleanupProcessing || alreadyCleaned}
+                    className="w-full py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm
+                               font-bold uppercase border-2 border-black bg-white
+                               shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                               active:translate-y-0.5 active:translate-x-0.5 active:shadow-none
+                               transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {cleanupProcessing ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        {removalProgress?.stage === "loading"
+                          ? `Downloading… ${removalProgress.pct}%`
+                          : "Removing background…"}
+                      </>
+                    ) : alreadyCleaned ? (
+                      <>
+                        <Check className="w-4 h-4" />
+                        Background Removed
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4" />
+                        Clean Up Photo
+                      </>
+                    )}
+                  </button>
+                  {cleanupError && (
+                    <p className="text-center text-xs text-red-600 font-medium">{cleanupError}</p>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -373,6 +395,95 @@ export function ItemDetailsSheet({ item, onClose, onDeleted }: ItemDetailsSheetP
               onSelect={handleCompareSelect}
               onCancel={() => { setCompareData(null); setCleanupError(null); }}
             />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add to Lookbook picker */}
+      <AnimatePresence>
+        {showLookbookPicker && (
+          <motion.div
+            initial={{ opacity: 0, y: "100%" }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: "100%" }}
+            transition={{ type: "spring", damping: 28, stiffness: 240 }}
+            className="fixed inset-0 z-[75] flex flex-col max-w-md mx-auto bg-[#f9f4ee]"
+          >
+            {/* Picker header */}
+            <div className="sticky top-0 z-10 flex items-center justify-between px-4 pb-3
+                            bg-white border-b-2 border-black flex-shrink-0"
+              style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
+              <h2 className="font-display font-bold text-xl uppercase tracking-tight">Add to Lookbook</h2>
+              <button
+                onClick={() => setShowLookbookPicker(false)}
+                className="w-9 h-9 border-2 border-black rounded-full flex items-center justify-center
+                           bg-white shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]
+                           active:translate-y-0.5 active:translate-x-0.5 active:shadow-none transition-all"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Group list */}
+            <div className="flex-1 overflow-y-auto">
+              {!outfits || outfits.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 gap-2 text-center px-8">
+                  <p className="text-sm font-bold text-black/40 uppercase">No saved looks yet</p>
+                  <p className="text-xs text-black/30">Save a look from the Generate page first.</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-black/10">
+                  {outfits.map((outfit) => {
+                    const isInGroup = outfit.itemIds?.includes(item.id) ?? false;
+                    const thumbItems = (outfit.items ?? []).slice(0, 3);
+                    return (
+                      <button
+                        key={outfit.id}
+                        onClick={() => {
+                          if (isInGroup) {
+                            removeFromOutfit.mutate(
+                              { id: outfit.id, itemId: item.id },
+                              { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() }); } },
+                            );
+                          } else {
+                            addToOutfit.mutate(
+                              { id: outfit.id, data: { itemId: item.id } },
+                              { onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListOutfitsQueryKey() }); } },
+                            );
+                          }
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-black/5 active:bg-black/10 transition-colors text-left"
+                      >
+                        {/* 3-thumbnail strip */}
+                        <div className="flex gap-0.5 shrink-0">
+                          {Array.from({ length: 3 }).map((_, i) => {
+                            const t = thumbItems[i];
+                            return (
+                              <div key={i} className="w-12 h-12 border-2 border-black overflow-hidden"
+                                   style={{ background: "#FDECEF" }}>
+                                {t?.imageObjectPath && (
+                                  <img src={getImageUrl(t.imageObjectPath)!} alt={t.name}
+                                       className="w-full h-full object-contain" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* Name */}
+                        <span className="flex-1 font-display font-bold text-sm uppercase tracking-tight truncate">
+                          {outfit.name}
+                        </span>
+                        {/* Checkmark */}
+                        <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors
+                                        ${isInGroup ? "bg-black border-black" : "bg-white border-black/30"}`}>
+                          {isInGroup && <Check className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

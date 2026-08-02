@@ -27,6 +27,18 @@ export interface ClothingItem {
   timesWorn: number;
   /** "YYYY-MM-DD" local date string, null if never used */
   lastUsedDate: string | null;
+  /** Color/object labels extracted from the photo (web canvas or iOS Vision) */
+  visionLabels: string[];
+  /** Text detected inside the photo (iOS Vision VNRecognizeTextRequest) */
+  visionText: string[];
+  /**
+   * Version of the vision analysis stored on this item.
+   * 0 = unanalyzed
+   * 1 = iOS Vision (VNClassifyImage + VNRecognizeText)
+   * 4 = web canvas color extraction (current algorithm)
+   * 5 = web analyzed, no labels found — do NOT retry
+   */
+  visionVersion: number;
   createdAt: string;
   updatedAt: string;
 }

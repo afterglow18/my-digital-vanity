@@ -71,15 +71,25 @@ function getDB(): Promise<IDBPDatabase<VanitySchema>> {
 
 // ── Clothing ──────────────────────────────────────────────────────────────────
 
+/** Fills in any fields added after the original schema so old rows are safe. */
+function backfillItem(item: ClothingItem): ClothingItem {
+  return {
+    ...item,
+    lastUsedDate:  item.lastUsedDate  ?? null,
+    visionLabels:  item.visionLabels  ?? [],
+    visionText:    item.visionText    ?? [],
+    visionVersion: item.visionVersion ?? 0,
+  };
+}
+
 export async function dbListClothing(category?: string): Promise<ClothingItem[]> {
   const db = await getDB();
   if (category) {
     const items = (await db.getAllFromIndex('clothing', 'by-category', category))
-      .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
+      .map(backfillItem);
     return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
-  const items = (await db.getAll('clothing'))
-    .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
+  const items = (await db.getAll('clothing')).map(backfillItem);
   return items.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
@@ -102,6 +112,9 @@ export async function dbCreateClothing(data: CreateClothingData): Promise<Clothi
     isFavorite: data.isFavorite ?? false,
     timesWorn: 0,
     lastUsedDate: null,
+    visionLabels: [],
+    visionText: [],
+    visionVersion: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -181,7 +194,7 @@ async function hydrateOutfit(
   const items = (
     await Promise.all(ois.map((oi) => db.get('clothing', oi.clothingItemId)))
   ).filter((i): i is ClothingItem => i != null)
-    .map((item) => ({ ...item, lastUsedDate: item.lastUsedDate ?? null }));
+    .map(backfillItem);
   return { ...row, items };
 }
 
