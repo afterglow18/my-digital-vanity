@@ -22,7 +22,6 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { toast } from 'sonner';
 import { Capacitor } from '@capacitor/core';
 import { dbListClothing, dbUpdateClothing } from '@/lib/db';
 import { getImageUrl } from '@/lib/utils';
@@ -81,7 +80,6 @@ export function useVisionIndexer() {
     runningRef.current = true;
 
     (async () => {
-      const toastId = 'vision-indexer';
       try {
         const items = await dbListClothing();
         const isNative = Capacitor.isNativePlatform();
@@ -99,10 +97,6 @@ export function useVisionIndexer() {
 
         const total = needsIndexing.length;
         let done = 0;
-
-        // Show a persistent loading toast so the user knows work is happening.
-        // We update its message as items are processed.
-        toast.loading(`Indexing photos… 0 / ${total}`, { id: toastId, duration: Infinity });
 
         for (const item of needsIndexing) {
           // Resolve storage key → actual URL before analysis
@@ -138,7 +132,6 @@ export function useVisionIndexer() {
           }
 
           done++;
-          toast.loading(`Indexing photos… ${done} / ${total}`, { id: toastId, duration: Infinity });
 
           // Invalidate the clothing cache periodically so search results
           // start appearing well before the full backfill completes.
@@ -152,10 +145,8 @@ export function useVisionIndexer() {
         // Final invalidation to pick up any items in the last partial batch.
         await queryClient.invalidateQueries({ queryKey: getListClothingQueryKey() });
 
-        toast.success('Photo search ready', { id: toastId, duration: 3000 });
       } catch {
-        // Never crash the app; dismiss any lingering toast silently.
-        toast.dismiss(toastId);
+        // silent — never crash the app
       } finally {
         runningRef.current = false;
       }
