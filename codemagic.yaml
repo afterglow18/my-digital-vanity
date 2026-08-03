@@ -150,13 +150,7 @@ workflows:
           # Use Python to handle both real newlines AND literal \n sequences that
           # Codemagic's env-var UI sometimes produces when pasting multi-line values.
           mkdir -p "$HOME/private_keys"
-          python3 -c "
-import os
-key = os.environ['APP_STORE_CONNECT_PRIVATE_KEY'].replace('\\\\n', '\\n').strip()
-path = os.path.expanduser('~') + '/private_keys/AuthKey_' + os.environ['APP_STORE_CONNECT_KEY_IDENTIFIER'] + '.p8'
-open(path, 'w').write(key + '\\n')
-print('Wrote', len(key), 'chars to', path)
-"
+          python3 -c "import os; k=os.environ['APP_STORE_CONNECT_PRIVATE_KEY'].replace('\\\\n','\\n').strip(); p=os.path.expanduser('~')+'/private_keys/AuthKey_'+os.environ['APP_STORE_CONNECT_KEY_IDENTIFIER']+'.p8'; open(p,'w').write(k+'\\n'); print('Wrote',len(k),'chars to',p)"
           xcodebuild \
             -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/App.xcarchive" \
