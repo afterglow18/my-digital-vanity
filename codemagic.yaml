@@ -151,6 +151,14 @@ workflows:
           # Codemagic's env-var UI sometimes produces when pasting multi-line values.
           mkdir -p "$HOME/private_keys"
           python3 -c "import os; k=os.environ['APP_STORE_CONNECT_PRIVATE_KEY'].replace('\\\\n','\\n').strip(); p=os.path.expanduser('~')+'/private_keys/AuthKey_'+os.environ['APP_STORE_CONNECT_KEY_IDENTIFIER']+'.p8'; open(p,'w').write(k+'\\n'); print('Wrote',len(k),'chars to',p)"
+          echo "--- .p8 first line ---"
+          head -1 "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          echo "--- .p8 last line ---"
+          tail -1 "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          echo "--- line count ---"
+          wc -l "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          echo "--- openssl check ---"
+          openssl pkey -in "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8" -noout && echo "Key is valid" || echo "Key is INVALID"
           xcodebuild \
             -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/App.xcarchive" \
