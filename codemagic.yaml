@@ -147,8 +147,20 @@ workflows:
         script: |
           # Write the .p8 key to disk so xcodebuild can authenticate with
           # Apple Developer Portal to resolve provisioning profiles automatically.
+          # Use Python to handle both real newlines AND literal \n sequences that
+          # Codemagic's env-var UI sometimes produces when pasting multi-line values.
           mkdir -p "$HOME/private_keys"
-          printf '%s' "$APP_STORE_CONNECT_PRIVATE_KEY" > "$HOME/private_keys/AuthKey_${APP_STORE_CONNECT_KEY_IDENTIFIER}.p8"
+          python3 - <<'PYEOF'
+import os, sys
+key = os.environ['APP_STORE_CONNECT_PRIVATE_KEY']
+# Expand literal \n sequences in case the UI stored them that way
+key = key.replace('\\n', '\n').strip()
+path = os.path.join(os.path.expanduser('~'), 'private_keys',
+                    f'AuthKey_{os.environ["APP_STORE_CONNECT_KEY_IDENTIFIER"]}.p8')
+with open(path, 'w') as f:
+    f.write(key + '\n')
+print(f'Wrote {len(key)} chars to {path}')
+PYEOF
           xcodebuild \
             -exportArchive \
             -archivePath "$CM_BUILD_DIR/build/App.xcarchive" \
